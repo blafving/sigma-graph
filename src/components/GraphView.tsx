@@ -67,9 +67,9 @@ function GraphCanvasInner() {
   useEffect(() => {
     setSettings({
       defaultNodeColor: '#333',
-      defaultNodeType: 'graphology-rendering-webgl-node',
+      defaultNodeType: 'circle',
       defaultEdgeColor: '#aaa',
-      defaultEdgeType: 'graphology-rendering-webgl-edge',
+      defaultEdgeType: 'line',
       labelSize: 12,
       labelFont: 'sans-serif',
       labelRenderedSizeThreshold: 8,
