@@ -114,7 +114,7 @@ function GraphCanvasInner() {
     const timer = setTimeout(() => {
       try {
         const sGraph = sigmaGraphRef.current;
-        if (!sGraph || sGraph.isEmpty()) {
+        if (!sGraph || sGraph.order === 0) {
           setIsLayoutRunning(false);
           return;
         }
