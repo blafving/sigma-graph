@@ -68,15 +68,21 @@ export async function fetchFullGraph(limit = 10000): Promise<FullGraphResponse> 
   console.log('[API] nodes parsed: count=', data.nodes ? data.nodes.length : 'null', 'keys=', Object.keys(data));
 
   // Build nodes with IDs
-  // Use lowercase name for the ID so it matches edge source/target from Cypher queries.
-  // The API returns name in mixed case (from filenames), but Neo4j stores the property
-  // in lowercase. Edge Cypher uses labels(a)[0] + ':' + a.name which is lowercase.
-  const nodes: ApiFullNode[] = (data.nodes || []).map((n: ApiNode) => ({
-    id: `${n.label}:${(n.name || n.properties?.name || '').toLowerCase()}`,
-    label: n.label,
-    name: n.name,
-    properties: n.properties,
-  }));
+  // Use Neo4j label (from properties.label) + lowercase name for the ID so it matches
+  // edge source/target from Cypher queries. The API returns n.label as the file import
+  // type (e.g. "file_path") but Neo4j's actual node label is in properties.label (e.g. "Entity").
+  // Edge Cypher uses labels(a)[0] + ':' + a.name which gives "Entity:lowercase-name".
+  const nodes: ApiFullNode[] = (data.nodes || []).map((n: ApiNode) => {
+    const props = n.properties as Record<string, string | undefined>;
+    const neo4jLabel = props?.label || n.label;
+    const nodeLabel = String(n.name || props?.name || '').toLowerCase();
+    return {
+      id: `${neo4jLabel}:${nodeLabel}`,
+      label: n.label,
+      name: n.name,
+      properties: n.properties,
+    };
+  });
   console.log('[API] nodes built:', nodes.length);
 
   // Fetch edges via /query with a Cypher that returns all relationships
