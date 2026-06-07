@@ -271,9 +271,9 @@ function GraphCanvasInner() {
         <NodeList
           allTypes={allTypes}
           visibleTypes={visibleTypes}
-          typeCounts={typeCounts}
           visibleTypeCounts={visibleTypeCounts}
           onToggleType={toggleType}
+          searchQuery={searchQuery}
           graph={graphRef.current}
         />
 

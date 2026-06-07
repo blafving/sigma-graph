@@ -3,71 +3,91 @@ import type { DirectedGraph } from 'graphology';
 import { labelToColor } from '../lib/color-palette';
 
 interface NodeListProps {
+  graph: DirectedGraph | null;
+  searchQuery: string;
   allTypes: Set<string>;
   visibleTypes: Set<string>;
-  typeCounts: Map<string, number>;
   visibleTypeCounts: Map<string, number>;
   onToggleType: (type: string) => void;
-  graph: DirectedGraph | null;
 }
 
 export function NodeList({
+  graph,
+  searchQuery,
   allTypes,
   visibleTypes,
-  typeCounts,
   visibleTypeCounts,
   onToggleType,
-  graph,
 }: NodeListProps) {
-  const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
-  const [searchFilter, setSearchFilter] = useState<Record<string, string>>({});
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
-  const toggleCollapsed = (type: string) => {
-    setCollapsedTypes(prev => {
-      const next = new Set(prev);
-      if (next.has(type)) next.delete(type);
-      else next.add(type);
-      return next;
-    });
-  };
-
-  const sortedTypes = Array.from(allTypes).sort();
+  // Build a search filter map from the query (split by space for multi-word)
+  const searchTokens = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <span style={styles.headerTitle}>NODES</span>
-        <button
-          style={styles.expandAllBtn}
-          onClick={() => setCollapsedTypes(new Set())}
-          title="Expand all"
-        >
-          +
-        </button>
+    <div style={{
+      width: 280,
+      background: '#1a1a2e',
+      borderRight: '1px solid #2a2a4a',
+      overflowY: 'auto',
+      fontSize: 13,
+      fontFamily: 'sans-serif',
+    }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid #2a2a4a' }}>
+        <div style={{ marginBottom: 8, fontWeight: 600, color: '#fff' }}>NODES</div>
+        <div style={{
+          display: 'flex',
+          gap: 4,
+        }}>
+          <input
+            type="text"
+            placeholder="Search nodes..."
+            value={searchQuery}
+            onChange={e => {
+              // Search is handled by parent's FilterBar, but we also accept it here
+              // for direct search in this panel
+            }}
+            style={{
+              flex: 1,
+              padding: '4px 8px',
+              background: '#0d0d1a',
+              border: '1px solid #2a2a4a',
+              borderRadius: 4,
+              color: '#fff',
+              fontSize: 12,
+            }}
+          />
+        </div>
       </div>
 
-      <div style={styles.list}>
-        {sortedTypes.map(type => {
-          const count = typeCounts.get(type) || 0;
-          const visibleCount = visibleTypeCounts.get(type) || 0;
+      <div style={{ padding: '8px 0' }}>
+        {Array.from(allTypes).sort().map(type => {
           const isVisible = visibleTypes.has(type);
-          const isCollapsed = collapsedTypes.has(type);
           const color = labelToColor(type);
-          const filter = searchFilter[type] || '';
+          const count = visibleTypeCounts.get(type) || 0;
 
           // Get nodes of this type
-          const nodesOfType: string[] = [];
+          const nodesOfType: Array<{ label: string; id: string }> = [];
           if (graph && isVisible) {
-            graph.forEachNode((_, data) => {
-               if (data.type === type && (!filter || (data.label as string).toLowerCase().includes(filter.toLowerCase()))) {
-                nodesOfType.push(data.label as string);
+            graph.forEachNode((nodeId, data) => {
+              if (data.nodeType === type) {
+                const label = data.label as string;
+                // Filter by search tokens
+                if (searchTokens.length > 0) {
+                  const match = searchTokens.every(token => label.toLowerCase().includes(token));
+                  if (!match) return;
+                }
+                nodesOfType.push({ label, id: nodeId });
               }
             });
-            nodesOfType.sort();
+            nodesOfType.sort((a, b) => a.label.localeCompare(b.label));
           }
 
           return (
-            <div key={type} style={styles.typeGroup}>
+            <div key={type} style={{
+              ...styles.typeGroup,
+              opacity: isVisible ? 1 : 0.4,
+            }}>
               <div
                 style={{
                   ...styles.typeHeader,
@@ -75,42 +95,42 @@ export function NodeList({
                 }}
                 onClick={() => onToggleType(type)}
               >
-                <button
-                  style={styles.collapseBtn}
-                  onClick={(e) => { e.stopPropagation(); toggleCollapsed(type); }}
-                >
-                  {isCollapsed ? '▶' : '▼'}
-                </button>
-                <span style={{ ...styles.typeDot, background: color }} />
-                <span style={styles.typeName}>{type}</span>
-                <span style={styles.typeCount}>
-                  {visibleCount}/{count}
+                <span style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: color,
+                  display: 'inline-block',
+                  marginRight: 6,
+                }} />
+                <span style={{ fontWeight: 500, color: '#fff' }}>{type}</span>
+                <span style={{ color: '#888', marginLeft: 6, fontSize: 11 }}>
+                  {count || nodesOfType.length}
                 </span>
               </div>
 
-              {!isCollapsed && (
-                <div style={styles.nodeList}>
-                  {filter !== '' && (
-                    <input
-                      type="text"
-                      placeholder="Filter..."
-                      value={filter}
-                      onChange={(e) => setSearchFilter(prev => ({ ...prev, [type]: e.target.value }))}
-                      style={styles.filterInput}
-                    />
-                  )}
-                  {nodesOfType.length === 0 ? (
-                    <div style={styles.emptyNode}>No nodes</div>
-                  ) : (
-                    nodesOfType.slice(0, 50).map(name => (
-                      <div key={name} style={styles.nodeItem}>
-                        {name}
-                      </div>
-                    ))
-                  )}
-                  {nodesOfType.length > 50 && (
-                    <div style={styles.moreNodes}>+{nodesOfType.length - 50} more</div>
-                  )}
+              {isVisible && nodesOfType.length > 0 && nodesOfType.length <= 50 && (
+                <div style={{ paddingLeft: 20 }}>
+                  {nodesOfType.slice(0, 50).map(({ label, id }) => (
+                    <div
+                      key={id}
+                      onClick={() => {
+                        setSelectedNode(id);
+                      }}
+                      style={{
+                        ...styles.nodeItem,
+                        background: selectedNode === id ? '#2a2a4a' : 'transparent',
+                      }}
+                    >
+                      {label}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {isVisible && nodesOfType.length > 50 && (
+                <div style={{ paddingLeft: 20, color: '#666', fontSize: 11 }}>
+                  ... and {nodesOfType.length - 50} more
                 </div>
               )}
             </div>
@@ -121,112 +141,21 @@ export function NodeList({
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    width: 240,
-    background: '#16213e',
-    borderRight: '1px solid #333',
-    display: 'flex',
-    flexDirection: 'column',
-    flexShrink: 0,
-    overflow: 'hidden',
-  },
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '8px 12px',
-    borderBottom: '1px solid #333',
-  },
-  headerTitle: {
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: 1,
-    color: '#888',
-  },
-  expandAllBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#888',
-    cursor: 'pointer',
-    fontSize: 14,
-    padding: '0 4px',
-  },
-  list: {
-    flex: 1,
-    overflowY: 'auto',
-    padding: '4px 0',
-  },
+const styles = {
   typeGroup: {
-    borderBottom: '1px solid #222',
+    cursor: 'pointer',
   },
   typeHeader: {
+    padding: '6px 16px',
     display: 'flex',
     alignItems: 'center',
-    gap: 4,
-    padding: '4px 8px',
-    cursor: 'pointer',
-    fontSize: 11,
+    fontSize: 12,
     userSelect: 'none',
   },
-  typeDot: {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    flexShrink: 0,
-  },
-  typeName: {
-    flex: 1,
-    fontWeight: 500,
-  },
-  typeCount: {
-    fontSize: 10,
-    color: '#888',
-  },
-  collapseBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#666',
-    cursor: 'pointer',
-    fontSize: 9,
-    padding: 0,
-    width: 14,
-    textAlign: 'center',
-  },
-  nodeList: {
-    padding: '2px 8px 2px 26px',
-    maxHeight: 200,
-    overflowY: 'auto',
-  },
-  filterInput: {
-    width: '100%',
-    padding: '2px 6px',
-    background: '#0f3460',
-    border: '1px solid #444',
-    borderRadius: 3,
-    color: '#ccc',
-    fontSize: 10,
-    outline: 'none',
-    marginBottom: 2,
-  },
   nodeItem: {
-    fontSize: 10,
-    padding: '1px 4px',
-    color: '#aaa',
+    padding: '3px 16px 3px 28px',
+    fontSize: 11,
+    color: '#ccc',
     cursor: 'pointer',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  emptyNode: {
-    fontSize: 10,
-    color: '#666',
-    padding: '2px 4px',
-  },
-  moreNodes: {
-    fontSize: 10,
-    color: '#666',
-    padding: '2px 4px',
-    fontStyle: 'italic',
   },
 };

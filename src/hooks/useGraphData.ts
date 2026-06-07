@@ -1,6 +1,7 @@
 import { DirectedGraph } from 'graphology';
 import { useCallback, useRef } from 'react';
-import { fetchFullGraph, ApiFullNode } from '../lib/api-client';
+import { fetchFullGraph } from '../lib/api-client';
+import type { ApiFullNode } from '../lib/api-client';
 import { labelToColor } from '../lib/color-palette';
 
 export function useGraphData() {
@@ -32,7 +33,9 @@ export function useGraphData() {
         y: 0,
         size: 4,
         color: labelToColor(node.label),
-        type: node.label,
+        // Use `nodeType` (not `type`) for our categorization.
+        // Sigma.js uses `type` internally for renderer dispatch — don't overwrite it.
+        nodeType: node.label,
         properties: node.properties,
       });
     }

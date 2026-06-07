@@ -5,12 +5,13 @@ export function useGraphFilters(graph: DirectedGraph | null) {
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Get all unique types from the graph
+  // Get all unique types from the graph (stored in nodeType, not type —
+  // sigma.js reserves `type` for its internal renderer dispatch)
   const allTypes = useMemo(() => {
     if (!graph) return new Set<string>();
     const types = new Set<string>();
     graph.forEachNode((_, nodeData) => {
-      if (nodeData.type) types.add(nodeData.type as string);
+      if (nodeData.nodeType) types.add(nodeData.nodeType as string);
     });
     return types;
   }, [graph]);
@@ -42,7 +43,7 @@ export function useGraphFilters(graph: DirectedGraph | null) {
     // Remove nodes that don't match visible types or search
     const nodesToRemove: string[] = [];
     g.forEachNode((node, nodeData) => {
-      const typeMatch = visibleTypes.size === 0 || visibleTypes.has(nodeData.type as string);
+      const typeMatch = visibleTypes.size === 0 || visibleTypes.has(nodeData.nodeType as string);
       const searchMatch = !searchQuery ||
         (nodeData.label as string).toLowerCase().includes(searchQuery.toLowerCase());
       if (!typeMatch || !searchMatch) {
@@ -58,9 +59,9 @@ export function useGraphFilters(graph: DirectedGraph | null) {
     if (!graph) return new Map<string, number>();
     const counts = new Map<string, number>();
     graph.forEachNode((_, nodeData) => {
-      const type = nodeData.type as string;
+      const type = nodeData.nodeType as string;
       if (type && visibleTypes.has(type)) {
-        counts.set(type, (counts.get(type) || 0) + 1);
+        counts.set(type, (counts.get(type) || 1) + 1);
       }
     });
     return counts;
