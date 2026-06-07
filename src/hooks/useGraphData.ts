@@ -53,7 +53,14 @@ export function useGraphData() {
         continue;
       }
       // Check if edge already exists between these nodes (undirected graph)
-      if (graph.hasEdgeBetween(rel.source, rel.target)) {
+      let alreadyExists = false;
+      graph.forEachEdge(function(e) {
+        const [src, tgt] = graph.extremities(e);
+        if ((src === rel.source && tgt === rel.target) || (src === rel.target && tgt === rel.source)) {
+          alreadyExists = true;
+        }
+      });
+      if (alreadyExists) {
         edgesDuplicate++;
         continue;
       }
