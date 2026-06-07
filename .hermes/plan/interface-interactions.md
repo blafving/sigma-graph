@@ -1,5 +1,20 @@
 # Interface Interactions & API Plan
 
+## Status: ✅ RELATIONSHIPS FIXED
+
+The edge rendering issue is resolved. The graph now shows all 874 nodes and ~794 relationships.
+
+### What was fixed (merged to main via fix-relationships branch)
+
+1. **Node ID case mismatch** — API returns mixed-case names but Cypher uses lowercase. Fixed by lowercasing IDs.
+2. **useSetSettings destroying loaded graph** — Settings changes recreated the Sigma instance with empty graph. Fixed by passing settings as props to `<SigmaContainer>`.
+3. **Stats bar `order` vs `size`** — graphology convention: `order`=nodes, `size`=edges. Fixed.
+4. **Neo4j label vs API label mismatch** — API `n.label` is file type (e.g. `file_path`) but Neo4j label is `properties.label` (e.g. `Entity`). Fixed node IDs to use Neo4j label.
+5. **Duplicate edges from Cypher** — `MATCH (a)-[r]-(b)` returns both directions. Added `forEachEdge` dedup check.
+6. **Missing nodes from edge references** — Nodes only referenced by edges (not in API node list) were skipped. Now auto-created on demand.
+
+terface Interactions & API Plan
+
 ## Current State
 
 ### Backend endpoints (research-2-912098182204.us-central1.run.app)
