@@ -44,13 +44,34 @@ export function useGraphData() {
     let edgesAdded = 0;
     let edgesSkipped = 0;
     let edgesDuplicate = 0;
+    let nodesCreated = 0;
     for (const rel of data.relationships) {
-      if (!graph.hasNode(rel.source) || !graph.hasNode(rel.target)) {
-        edgesSkipped++;
-        if (edgesSkipped <= 3) {
-          console.warn('[Graph] Edge skipped: source=' + rel.source + ' target=' + rel.target);
-        }
-        continue;
+      // Ensure both endpoints exist — add missing nodes from edge references
+      if (!graph.hasNode(rel.source)) {
+        const parts = rel.source.split(':');
+        const sourceLabel = parts[0] || 'unknown';
+        const sourceName = parts.slice(1).join(':') || 'unknown';
+        graph.addNode(rel.source, {
+          label: sourceName,
+          x: 0, y: 0, size: 4,
+          color: labelToColor(sourceLabel),
+          nodeType: sourceLabel,
+          properties: {},
+        });
+        nodesCreated++;
+      }
+      if (!graph.hasNode(rel.target)) {
+        const parts = rel.target.split(':');
+        const targetLabel = parts[0] || 'unknown';
+        const targetName = parts.slice(1).join(':') || 'unknown';
+        graph.addNode(rel.target, {
+          label: targetName,
+          x: 0, y: 0, size: 4,
+          color: labelToColor(targetLabel),
+          nodeType: targetLabel,
+          properties: {},
+        });
+        nodesCreated++;
       }
       // Check if edge already exists between these nodes (undirected graph)
       let alreadyExists = false;
@@ -71,7 +92,7 @@ export function useGraphData() {
       });
       edgesAdded++;
     }
-    console.log('[Graph] Edges: added=' + edgesAdded + ' skipped=' + edgesSkipped + ' duplicate=' + edgesDuplicate + ' total in data=' + data.relationships.length);
+    console.log('[Graph] Edges: added=' + edgesAdded + ' skipped=' + edgesSkipped + ' duplicate=' + edgesDuplicate + ' nodesCreated=' + nodesCreated + ' total in data=' + data.relationships.length);
 
     return graph;
   }, []);
