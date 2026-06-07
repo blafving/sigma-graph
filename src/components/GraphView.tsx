@@ -5,7 +5,6 @@ import {
   useCamera,
   useRegisterEvents,
   useLoadGraph,
-  useSetSettings,
   ControlsContainer,
   ZoomControl,
 } from '@react-sigma/core';
@@ -27,7 +26,6 @@ function GraphCanvasInner() {
   const sigma = useSigma();
   const { goto } = useCamera();
   const loadGraph = useLoadGraph();
-  const setSettings = useSetSettings();
 
   const { graphRef, loadGraph: loadData } = useGraphData();
   const { status: backendStatus, lastChecked } = useBackendStatus();
@@ -63,21 +61,7 @@ function GraphCanvasInner() {
   const [isLayoutRunning, setIsLayoutRunning] = useState(false);
   const layoutAppliedRef = useRef(false);
 
-  // Set default settings
-  useEffect(() => {
-    setSettings({
-      defaultNodeColor: '#333',
-      defaultNodeType: 'circle',
-      defaultEdgeColor: '#aaa',
-      defaultEdgeType: 'line',
-      labelSize: 12,
-      labelFont: 'sans-serif',
-      labelRenderedSizeThreshold: 8,
-      labelDensity: 0.3,
-      labelGridCellSize: 20,
-      enableEdgeEvents: true,
-    });
-  }, [setSettings]);
+  // Settings are passed via SigmaContainer props — no need for useSetSettings
 
   // Load the graph on mount
   useEffect(() => {
@@ -149,7 +133,7 @@ function GraphCanvasInner() {
   useEffect(() => {
     if (!graphRef.current || !graphLoaded) return;
 
-    const sGraph = sigmaGraphRef.current;
+    const sGraph = sigma.getGraph();
     if (!sGraph) return;
 
     const filtered = applyFilters(graphRef.current);
@@ -246,11 +230,10 @@ function GraphCanvasInner() {
     });
   }, [registerEvents, onNodeClick]);
 
-  // Count visible nodes/edges
+  // Count visible nodes/edges — graph.order = node count, graph.size = edge count (graphology convention)
   const graph = sigma.getGraph();
-  const visibleNodeCount = graph.size;
-  let visibleEdgeCount = 0;
-  graph.forEachEdge(() => { visibleEdgeCount++; });
+  const visibleNodeCount = graph.order;
+  const visibleEdgeCount = graph.size;
 
   const totalNodes = graphLoaded
     ? (typeCounts.size > 0 ? Array.from(typeCounts).reduce((s, t) => s + t[1], 0) : visibleNodeCount)
@@ -325,7 +308,19 @@ export function GraphCanvas() {
   return (
     <SigmaContainer
       style={{ width: '100vw', height: '100vh' }}
-      settings={{ allowInvalidContainer: true }}
+      settings={{
+        allowInvalidContainer: true,
+        defaultNodeType: 'circle',
+        defaultNodeColor: '#333',
+        defaultEdgeType: 'line',
+        defaultEdgeColor: '#aaa',
+        labelSize: 12,
+        labelFont: 'sans-serif',
+        labelRenderedSizeThreshold: 8,
+        labelDensity: 0.3,
+        labelGridCellSize: 20,
+        enableEdgeEvents: true,
+      }}
     >
       <GraphCanvasInner />
     </SigmaContainer>

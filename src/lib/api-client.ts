@@ -68,8 +68,11 @@ export async function fetchFullGraph(limit = 10000): Promise<FullGraphResponse> 
   console.log('[API] nodes parsed: count=', data.nodes ? data.nodes.length : 'null', 'keys=', Object.keys(data));
 
   // Build nodes with IDs
+  // Use lowercase name for the ID so it matches edge source/target from Cypher queries.
+  // The API returns name in mixed case (from filenames), but Neo4j stores the property
+  // in lowercase. Edge Cypher uses labels(a)[0] + ':' + a.name which is lowercase.
   const nodes: ApiFullNode[] = (data.nodes || []).map((n: ApiNode) => ({
-    id: `${n.label}:${n.name}`,
+    id: `${n.label}:${(n.name || n.properties?.name || '').toLowerCase()}`,
     label: n.label,
     name: n.name,
     properties: n.properties,

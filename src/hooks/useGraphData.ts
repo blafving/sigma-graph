@@ -41,6 +41,8 @@ export function useGraphData() {
     }
 
     // Add edges
+    let edgesAdded = 0;
+    let edgesSkipped = 0;
     for (const rel of data.relationships) {
       if (graph.hasNode(rel.source) && graph.hasNode(rel.target)) {
         graph.addEdgeWithKey('e' + Math.random().toString(36).substr(2, 9), rel.source, rel.target, {
@@ -48,8 +50,15 @@ export function useGraphData() {
           color: '#aaa',
           size: 1,
         });
+        edgesAdded++;
+      } else {
+        edgesSkipped++;
+        if (edgesSkipped <= 3) {
+          console.warn('[Graph] Edge skipped: source=' + rel.source + ' target=' + rel.target);
+        }
       }
     }
+    console.log('[Graph] Edges: added=' + edgesAdded + ' skipped=' + edgesSkipped + ' total in data=' + data.relationships.length);
 
     return graph;
   }, []);
