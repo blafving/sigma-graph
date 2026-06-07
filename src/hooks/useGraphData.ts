@@ -40,25 +40,31 @@ export function useGraphData() {
       });
     }
 
-    // Add edges
+    // Add edges — skip duplicates (Cypher returns both directions of each relationship)
     let edgesAdded = 0;
     let edgesSkipped = 0;
+    let edgesDuplicate = 0;
     for (const rel of data.relationships) {
-      if (graph.hasNode(rel.source) && graph.hasNode(rel.target)) {
-        graph.addEdgeWithKey('e' + Math.random().toString(36).substr(2, 9), rel.source, rel.target, {
-          label: rel.type,
-          color: '#aaa',
-          size: 1,
-        });
-        edgesAdded++;
-      } else {
+      if (!graph.hasNode(rel.source) || !graph.hasNode(rel.target)) {
         edgesSkipped++;
         if (edgesSkipped <= 3) {
           console.warn('[Graph] Edge skipped: source=' + rel.source + ' target=' + rel.target);
         }
+        continue;
       }
+      // Check if edge already exists between these nodes (undirected graph)
+      if (graph.hasEdgeBetween(rel.source, rel.target)) {
+        edgesDuplicate++;
+        continue;
+      }
+      graph.addEdgeWithKey('e' + Math.random().toString(36).substr(2, 9), rel.source, rel.target, {
+        label: rel.type,
+        color: '#aaa',
+        size: 1,
+      });
+      edgesAdded++;
     }
-    console.log('[Graph] Edges: added=' + edgesAdded + ' skipped=' + edgesSkipped + ' total in data=' + data.relationships.length);
+    console.log('[Graph] Edges: added=' + edgesAdded + ' skipped=' + edgesSkipped + ' duplicate=' + edgesDuplicate + ' total in data=' + data.relationships.length);
 
     return graph;
   }, []);
