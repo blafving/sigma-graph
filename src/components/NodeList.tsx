@@ -43,9 +43,8 @@ export function NodeList({
             type="text"
             placeholder="Search nodes..."
             value={searchQuery}
-            onChange={e => {
-              // Search is handled by parent's FilterBar, but we also accept it here
-              // for direct search in this panel
+            onChange={() => {
+              // Search is handled by parent's FilterBar
             }}
             style={{
               flex: 1,
@@ -150,7 +149,7 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     fontSize: 12,
-    userSelect: 'none',
+    userSelect: 'none' as const,
   },
   nodeItem: {
     padding: '3px 16px 3px 28px',

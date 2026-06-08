@@ -18,7 +18,6 @@ import { NodeList } from './NodeList';
 import { DetailPanel } from './DetailPanel';
 import { StatsBar } from './StatsBar';
 import { StatusIndicator } from './StatusIndicator';
-import { labelToColor } from '../lib/color-palette';
 import { fetchTypeCounts } from '../lib/api-client';
 import type { DirectedGraph } from 'graphology';
 
@@ -309,7 +308,6 @@ export function GraphCanvas() {
     <SigmaContainer
       style={{ width: '100vw', height: '100vh' }}
       settings={{
-        allowInvalidContainer: true,
         defaultNodeType: 'circle',
         defaultNodeColor: '#333',
         defaultEdgeType: 'line',
