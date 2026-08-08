@@ -52,6 +52,17 @@ function SigmaCanvasInner() {
 
     setIsLayoutRunning(true);
     ui.setIsLayoutRunning(true);
+
+    // FA2 degenerates when every node starts at (0,0) - seed an initial
+    // random spread first so forces can separate the nodes.
+    const g0 = sigma.getGraph();
+    if (g0 && g0.order > 0) {
+      g0.forEachNode((node) => {
+        g0.setNodeAttribute(node, 'x', Math.random() * 20 - 10);
+        g0.setNodeAttribute(node, 'y', Math.random() * 20 - 10);
+      });
+    }
+
     layout.assign();
 
     setTimeout(() => {
@@ -116,6 +127,7 @@ function SigmaCanvasInner() {
       const { fetchSubgraph } = await import('../lib/api-client');
       const [label, name] = node.split(':');
       const subgraph = await fetchSubgraph(label, name, 2);
+      console.log('[CLICK]', node, '-> nodes=' + (subgraph.nodes||[]).length + ' rels=' + (subgraph.relationships||[]).length);
       const relationships = (subgraph.relationships || []).map((rel: any) => ({
         type: rel.type, source: rel.source, target: rel.target,
         targetLabel: rel.target.split(':')[0],

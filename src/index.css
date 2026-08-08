@@ -36,3 +36,9 @@ body {
 input::placeholder {
   color: #666;
 }
+
+
+/* Dark theme for the sigma canvas */
+.react-sigma {
+  --sigma-background-color: #1a1a2e;
+}
