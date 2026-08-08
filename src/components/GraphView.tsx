@@ -36,6 +36,7 @@ function SigmaCanvasInner() {
   const [isLayoutRunning, setIsLayoutRunning] = useState(false);
   const [filterTick, setFilterTick] = useState(0);
   const focusedNodeRef = useRef<string | null>(null);
+  const userInteractedRef = useRef(false);
   const zoomLevel = ui.zoomLevel;
   const layoutAppliedRef = useRef(false);
 
@@ -69,7 +70,7 @@ function SigmaCanvasInner() {
     setTimeout(() => {
       try {
         const gg = sigma.getGraph();
-        if (gg && gg.order > 0) goto({ x: 0, y: 0, ratio: 0.5 });
+        if (gg && gg.order > 0 && !userInteractedRef.current) goto({ x: 0, y: 0, ratio: 0.5 });
       } catch { /* ignore */ }
       setIsLayoutRunning(false);
       ui.setIsLayoutRunning(false);
@@ -136,6 +137,7 @@ function SigmaCanvasInner() {
   };
 
   const onNodeClick = async ({ node }: { node: string }) => {
+    userInteractedRef.current = true;
     restoreEmphasis();
     setSelectedNode(null);
     try {
@@ -223,7 +225,7 @@ function SigmaCanvasInner() {
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registerEvents]);
+  }, [registerEvents, onNodeClick, restoreEmphasis]);
 
   // Listen for node-focus requests from the sidebar
   useEffect(() => {
@@ -377,6 +379,7 @@ export function GraphView() {
               settings={{
                 defaultNodeType: 'circle',
                 defaultNodeColor: '#333',
+                labelColor: { attribute: 'labelColor', color: '#e0e0e0' },
                 defaultEdgeType: 'line',
                 defaultEdgeColor: '#aaa',
                 labelSize: 14,

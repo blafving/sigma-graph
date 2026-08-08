@@ -32,6 +32,7 @@ export function useGraphData() {
         x: 0,
         y: 0,
         size: 4,
+        labelColor: '#e0e0e0',
         color: labelToColor(node.label),
         // Use `nodeType` (not `type`) for our categorization.
         // Sigma.js uses `type` internally for renderer dispatch — don't overwrite it.
@@ -59,6 +60,7 @@ export function useGraphData() {
         graph.addNode(rel.source, {
           label: sourceName,
           x: 0, y: 0, size: 4,
+          labelColor: '#e0e0e0',
           color: labelToColor(sourceLabel),
           nodeType: sourceLabel,
           properties: {},
@@ -72,6 +74,7 @@ export function useGraphData() {
         graph.addNode(rel.target, {
           label: targetName,
           x: 0, y: 0, size: 4,
+          labelColor: '#e0e0e0',
           color: labelToColor(targetLabel),
           nodeType: targetLabel,
           properties: {},
