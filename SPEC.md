@@ -34,6 +34,16 @@ all on one page, with fast, predictable interaction.
 - Shows: node name, type, properties (key/value), relationships (type -> target), close button.
 - Relationship click may later navigate (future).
 
+### 7b. Minimap
+- Fixed world window = the FULL occupied-space bounding box, at EVERY zoom level.
+  - Minimum zoom (fit-all): minimap fills with the occupied area.
+  - Maximum zoom-in: boundary still visible (minimap width >= occupied extent).
+- Occupied vs unoccupied space shown clearly (fill + border on the graph bbox).
+- Viewport rectangle shows the current camera view inside the map.
+- Click or drag on the minimap -> center the main camera there (keeps current
+  zoom; min/maxCameraRatio clamps still apply). Clicking near the edge shows
+  unoccupied space, which the boundary makes obvious.
+
 ### 7. Canvas navigation
 - Wheel zoom, drag pan, zoom buttons, minimap; zoom level shown in stats bar.
 

@@ -7,7 +7,7 @@ import {
   ControlsContainer,
   ZoomControl,
 } from '@react-sigma/core';
-import { MiniMap } from '@react-sigma/minimap';
+import { CustomMiniMap } from './CustomMiniMap';
 import { LayoutForceAtlas2Control, useLayoutForceAtlas2 } from '@react-sigma/layout-forceatlas2';
 import { useGraphData } from '../hooks/useGraphData';
 import { useGraphUi } from '../GraphUiContext';
@@ -66,6 +66,31 @@ function SigmaCanvasInner() {
     }
 
     layout.assign();
+
+    // Normalize the layout to a fixed, readable spread (~60 units wide) so the
+    // map is navigable: the minimap boundary, camera clamps and fly all rely on
+    // meaningful world coordinates. FA2 alone collapses this graph to ~2 units.
+    const gl = sigma.getGraph();
+    if (gl && gl.order > 0) {
+      let mnX = Infinity, mxX = -Infinity, mnY = Infinity, mxY = -Infinity;
+      gl.forEachNode((_, a) => {
+        if (typeof a.x === 'number' && typeof a.y === 'number') {
+          mnX = Math.min(mnX, a.x); mxX = Math.max(mxX, a.x);
+          mnY = Math.min(mnY, a.y); mxY = Math.max(mxY, a.y);
+        }
+      });
+      const w = mxX - mnX, h = mxY - mnY;
+      const TARGET = 60;
+      const sx = w > 0.001 ? TARGET / w : 1;
+      const sy = h > 0.001 ? TARGET / h : 1;
+      const cx = (mnX + mxX) / 2, cy = (mnY + mxY) / 2;
+      gl.forEachNode((n, a) => {
+        if (typeof a.x !== 'number' || typeof a.y !== 'number') return;
+        gl.setNodeAttribute(n, 'x', (a.x - cx) * sx);
+        gl.setNodeAttribute(n, 'y', (a.y - cy) * sy);
+      });
+      console.log('[LAYOUT] rescaled to ~' + TARGET + ' units (was ' + w.toFixed(1) + 'x' + h.toFixed(1) + ')');
+    }
 
     setTimeout(() => {
       try {
@@ -250,7 +275,7 @@ function SigmaCanvasInner() {
     <>
       <ControlsContainer position="bottom-right"><ZoomControl /></ControlsContainer>
       <ControlsContainer position="bottom-left"><LayoutForceAtlas2Control /></ControlsContainer>
-      <ControlsContainer position="top-right"><MiniMap width="140px" height="100px" /></ControlsContainer>
+      <ControlsContainer position="top-right"><CustomMiniMap width={180} height={130} /></ControlsContainer>
       {isLayoutRunning && <div style={styles.layoutStatus}>Computing layout...</div>}
       <div style={styles.statsOverlayRow}>
         <StatsBar
@@ -377,6 +402,11 @@ export function GraphView() {
               graph={graph ?? undefined}
               style={{ width: '100%', height: '100%' }}
               settings={{
+                // Camera boundaries: max zoom-out keeps all nodes in view (observed
+                // fit-all ratio ~0.5 -> 0.55 with margin); max zoom-in stops about
+                // when a single node would fill the screen (0.06 ~ 8x deeper).
+                minCameraRatio: 0.06,
+                maxCameraRatio: 0.55,
                 defaultNodeType: 'circle',
                 defaultNodeColor: '#333',
                 labelColor: { attribute: 'labelColor', color: '#e0e0e0' },
