@@ -60,7 +60,9 @@ export function CustomMiniMap({ width = 180, height = 130 }: Props) {
   };
   const worldToMin = (c: HTMLCanvasElement, b: Bounds, x: number, y: number) => {
     const { s, ox, oy } = scaleOf(c, b);
-    return { x: ox + (x - b.minX) * s, y: oy + (y - b.minY) * s };
+    // y is FLIPPED: minimap top = graph top (world maxY). Map semantics, opposite of
+    // the canvas's grab-scroll direction.
+    return { x: ox + (x - b.minX) * s, y: oy + (b.maxY - y) * s };
   };
 
   // Redraw loop
@@ -135,7 +137,7 @@ export function CustomMiniMap({ width = 180, height = 130 }: Props) {
     const my = (e.clientY - rect.top) * (canvas.height / rect.height);
     const { s, ox, oy } = scaleOf(canvas, bounds);
     const wx = bounds.minX + (mx - ox) / s;
-    const wy = bounds.minY + (my - oy) / s;
+    const wy = bounds.maxY - (my - oy) / s;
     const cam = sigma.getCamera();
     if (typeof (cam as any).animatedSetState === 'function') {
       (cam as any).animatedSetState({ x: wx, y: wy }, { duration: 700 });
