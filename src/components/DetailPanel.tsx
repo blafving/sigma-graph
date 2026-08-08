@@ -15,41 +15,57 @@ interface DetailPanelProps {
 }
 
 export function DetailPanel({ node, onClose }: DetailPanelProps) {
-  if (!node) return null;
+  const hasNode = node !== null;
 
   return (
     <div style={styles.container}>
       <div style={styles.header}>
         <div>
-          <div style={styles.nodeName}>{node.name}</div>
-          <div style={styles.nodeLabel}>{node.label}</div>
+          {hasNode ? (
+            <>
+              <div style={styles.nodeName}>{node.name}</div>
+              <div style={styles.nodeLabel}>{node.label}</div>
+            </>
+          ) : (
+            <div style={styles.nodeName}>Select a node</div>
+          )}
         </div>
-        <button style={styles.closeBtn} onClick={onClose} title="Close">
-          ✕
-        </button>
+        {hasNode && (
+          <button style={styles.closeBtn} onClick={onClose} title="Close">
+            ✕
+          </button>
+        )}
       </div>
 
       {/* Properties */}
       <div style={styles.section}>
-        <div style={styles.sectionTitle}>Properties</div>
-        {Object.keys(node.properties).length === 0 ? (
-          <div style={styles.empty}>No properties</div>
-        ) : (
-          <div style={styles.propsTable}>
-            {Object.entries(node.properties).map(([key, value]) => (
-              <div key={key} style={styles.propRow}>
-                <span style={styles.propKey}>{key}</span>
-                <span style={styles.propValue}>
-                  {typeof value === 'string' ? value : JSON.stringify(value)}
-                </span>
+        {hasNode ? (
+          <>
+            <div style={styles.sectionTitle}>Properties</div>
+            {Object.keys(node.properties).length === 0 ? (
+              <div style={styles.empty}>No properties</div>
+            ) : (
+              <div style={styles.propsTable}>
+                {Object.entries(node.properties).map(([key, value]) => (
+                  <div key={key} style={styles.propRow}>
+                    <span style={styles.propKey}>{key}</span>
+                    <span style={styles.propValue}>
+                      {typeof value === 'string' ? value : JSON.stringify(value)}
+                    </span>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
+          </>
+        ) : (
+          <div style={{ padding: '20px 12px', color: '#666', fontSize: 12, textAlign: 'center' }}>
+            Click a node to see details
           </div>
         )}
       </div>
 
       {/* Relationships */}
-      {node.relationships.length > 0 && (
+      {hasNode && node.relationships.length > 0 && (
         <div style={styles.section}>
           <div style={styles.sectionTitle}>
             Relationships ({node.relationships.length})
@@ -71,8 +87,8 @@ export function DetailPanel({ node, onClose }: DetailPanelProps) {
 const styles: Record<string, React.CSSProperties> = {
   container: {
     width: 300,
-    background: '#16213e',
-    borderLeft: '1px solid #333',
+    background: '#070b14',
+    borderLeft: '2px solid #1e3a5f',
     display: 'flex',
     flexDirection: 'column',
     flexShrink: 0,

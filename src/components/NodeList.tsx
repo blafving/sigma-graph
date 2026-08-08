@@ -1,14 +1,16 @@
-import { useState } from 'react';
 import type { DirectedGraph } from 'graphology';
 import { labelToColor } from '../lib/color-palette';
 
 interface NodeListProps {
   graph: DirectedGraph | null;
   searchQuery: string;
+  onSearchChange?: (q: string) => void;
   allTypes: Set<string>;
   visibleTypes: Set<string>;
   visibleTypeCounts: Map<string, number>;
   onToggleType: (type: string) => void;
+  selectedNode?: { id: string } | null;
+  onNodeClick?: ({ node }: { node: string }) => void;
 }
 
 export function NodeList({
@@ -18,20 +20,24 @@ export function NodeList({
   visibleTypes,
   visibleTypeCounts,
   onToggleType,
+  selectedNode,
+  onNodeClick,
+  onSearchChange,
 }: NodeListProps) {
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
-
   // Build a search filter map from the query (split by space for multi-word)
   const searchTokens = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
   return (
     <div style={{
       width: 280,
-      background: '#1a1a2e',
-      borderRight: '1px solid #2a2a4a',
+      flexShrink: 0,
+      background: '#0a0a14',
+      borderRight: '2px solid #1e3a5f',
       overflowY: 'auto',
       fontSize: 13,
       fontFamily: 'sans-serif',
+      display: 'flex',
+      flexDirection: 'column',
     }}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid #2a2a4a' }}>
         <div style={{ marginBottom: 8, fontWeight: 600, color: '#fff' }}>NODES</div>
@@ -43,9 +49,7 @@ export function NodeList({
             type="text"
             placeholder="Search nodes..."
             value={searchQuery}
-            onChange={() => {
-              // Search is handled by parent's FilterBar
-            }}
+            onChange={(e) => onSearchChange?.(e.target.value)}
             style={{
               flex: 1,
               padding: '4px 8px',
@@ -114,11 +118,15 @@ export function NodeList({
                     <div
                       key={id}
                       onClick={() => {
-                        setSelectedNode(id);
+                        if (onNodeClick) {
+                          // Pass the real graphology node ID (label:lowercase-name) so GraphView
+                          // can look it up in the subgraph response and sigma graph exactly.
+                          onNodeClick({ node: id });
+                        }
                       }}
                       style={{
                         ...styles.nodeItem,
-                        background: selectedNode === id ? '#2a2a4a' : 'transparent',
+                        background: selectedNode?.id === id ? '#2a2a4a' : 'transparent',
                       }}
                     >
                       {label}

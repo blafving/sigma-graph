@@ -61,7 +61,7 @@ export function useGraphFilters(graph: DirectedGraph | null) {
     graph.forEachNode((_, nodeData) => {
       const type = nodeData.nodeType as string;
       if (type && visibleTypes.has(type)) {
-        counts.set(type, (counts.get(type) || 1) + 1);
+        counts.set(type, (counts.get(type) || 0) + 1);
       }
     });
     return counts;

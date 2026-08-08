@@ -1,4 +1,3 @@
-import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import '@react-sigma/core/lib/style.css';
@@ -11,11 +10,9 @@ try {
   const root = createRoot(document.getElementById('root')!);
   console.log('[MAIN] Root created, rendering...');
   root.render(
-    <StrictMode>
-      <ErrorBoundary>
-        <App />
-      </ErrorBoundary>
-    </StrictMode>,
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>,
   );
   console.log('[MAIN] Rendered successfully');
 } catch (err) {
