@@ -35,6 +35,7 @@ function SigmaCanvasInner() {
 
   const [isLayoutRunning, setIsLayoutRunning] = useState(false);
   const [filterTick, setFilterTick] = useState(0);
+  const focusedNodeRef = useRef<string | null>(null);
   const zoomLevel = ui.zoomLevel;
   const layoutAppliedRef = useRef(false);
 
@@ -121,7 +122,21 @@ function SigmaCanvasInner() {
   }, [sigma]);
 
   // Click node -> drill-down panel
+  const restoreEmphasis = () => {
+    if (!focusedNodeRef.current) return;
+    const g = sigma.getGraph();
+    if (!g) return;
+    g.forEachNode((n) => {
+      g.setNodeAttribute(n, 'size', 4);
+      g.setNodeAttribute(n, 'labelColor', '#e0e0e0');
+      g.setNodeAttribute(n, 'color', '#333');
+    });
+    focusedNodeRef.current = null;
+    sigma.refresh();
+  };
+
   const onNodeClick = async ({ node }: { node: string }) => {
+    restoreEmphasis();
     setSelectedNode(null);
     try {
       const { fetchSubgraph } = await import('../lib/api-client');
@@ -148,32 +163,30 @@ function SigmaCanvasInner() {
       // Animated camera fly (~1s): frame the clicked node + its closest neighbors,
       // so the viewer sees where on the map the node is. Fit the neighborhood bbox.
       const cam = sigma.getCamera();
-      const ids = [node, ...(g ? g.neighbors(node) : [])];
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, cnt = 0;
-      for (const id of ids) {
-        if (!g || !g.hasNode(id)) continue;
-        const d = g.getNodeAttributes(id);
-        if (typeof d.x === 'number' && typeof d.y === 'number') {
-          minX = Math.min(minX, d.x); maxX = Math.max(maxX, d.x);
-          minY = Math.min(minY, d.y); maxY = Math.max(maxY, d.y);
-          cnt++;
+      const nodeData2 = g ? g.getNodeAttributes(node) : null;
+      if (cam && nodeData2 && typeof nodeData2.x === 'number' && typeof nodeData2.y === 'number') {
+        const ratio = 0.3; // ~3.3x zoom: node + clear surrounding map context
+        if (typeof (cam as any).animatedSetState === 'function') {
+          (cam as any).animatedSetState({ x: nodeData2.x, y: nodeData2.y, ratio }, { duration: 1000 });
+        } else {
+          cam.setState({ x: nodeData2.x, y: nodeData2.y, ratio });
         }
       }
-      if (cnt > 0 && cam) {
-        const cw = sigma.getContainer()?.clientWidth || 1000;
-        const ch = sigma.getContainer()?.clientHeight || 800;
-        // enforce a MINIMUM frame (25 units) so we never zoom into empty space;
-        // ratio clamp 0.25-0.45 = moderate zoom: node + ~1/4 map as location context
-        const w = Math.max(maxX - minX, 8);
-        const h = Math.max(maxY - minY, 8);
-        const cx = (minX + maxX) / 2;
-        const cy = (minY + maxY) / 2;
-        const ratio = Math.min(0.25, Math.max(0.08, Math.min(cw / w, ch / h) * 0.55));
-        if (typeof (cam as any).animatedSetState === 'function') {
-          (cam as any).animatedSetState({ x: cx, y: cy, ratio }, { duration: 1000 });
-        } else {
-          cam.setState({ x: cx, y: cy, ratio });
-        }
+
+      // Emphasize the node + direct neighbors with a bright accent; leave the
+      // rest of the map at normal render so the viewer SEES where on the map
+      // the node is (dim-to-invisible made the canvas look blank).
+      if (g) {
+        const neighbors = new Set(g.neighbors(node));
+        neighbors.add(node);
+        g.forEachNode((n) => {
+          const related = neighbors.has(n);
+          g.setNodeAttribute(n, 'color', related ? '#4fc3f7' : '#5a6b8c');
+          g.setNodeAttribute(n, 'size', related ? 8 : 3);
+          g.setNodeAttribute(n, 'labelColor', related ? '#ffffff' : '#7a8aa8');
+        });
+        sigma.refresh();
+        focusedNodeRef.current = node;
       }
     } catch (err) {
       console.error('Failed to fetch subgraph:', err);
@@ -186,6 +199,7 @@ function SigmaCanvasInner() {
   // Hover dim + node click
   useEffect(() => {
     registerEvents({
+      clickStage: restoreEmphasis,
       clickNode: onNodeClick,
       enterNode: (event: { node: string }) => {
         const g = sigma.getGraph();
