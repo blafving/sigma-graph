@@ -127,7 +127,6 @@ function SigmaCanvasInner() {
       const { fetchSubgraph } = await import('../lib/api-client');
       const [label, name] = node.split(':');
       const subgraph = await fetchSubgraph(label, name, 2);
-      console.log('[CLICK]', node, '-> nodes=' + (subgraph.nodes||[]).length + ' rels=' + (subgraph.relationships||[]).length);
       const relationships = (subgraph.relationships || []).map((rel: any) => ({
         type: rel.type, source: rel.source, target: rel.target,
         targetLabel: rel.target.split(':')[0],
@@ -146,9 +145,35 @@ function SigmaCanvasInner() {
           relationships,
         });
       }
-      const nodeData = g ? g.getNodeAttributes(node) : null;
-      if (nodeData && 'x' in nodeData && 'y' in nodeData) {
-        goto({ x: nodeData.x as number, y: nodeData.y as number, ratio: 0.5 });
+      // Animated camera fly (~1s): frame the clicked node + its closest neighbors,
+      // so the viewer sees where on the map the node is. Fit the neighborhood bbox.
+      const cam = sigma.getCamera();
+      const ids = [node, ...(g ? g.neighbors(node) : [])];
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, cnt = 0;
+      for (const id of ids) {
+        if (!g || !g.hasNode(id)) continue;
+        const d = g.getNodeAttributes(id);
+        if (typeof d.x === 'number' && typeof d.y === 'number') {
+          minX = Math.min(minX, d.x); maxX = Math.max(maxX, d.x);
+          minY = Math.min(minY, d.y); maxY = Math.max(maxY, d.y);
+          cnt++;
+        }
+      }
+      if (cnt > 0 && cam) {
+        const cw = sigma.getContainer()?.clientWidth || 1000;
+        const ch = sigma.getContainer()?.clientHeight || 800;
+        // enforce a MINIMUM frame (25 units) so we never zoom into empty space;
+        // ratio clamp 0.25-0.45 = moderate zoom: node + ~1/4 map as location context
+        const w = Math.max(maxX - minX, 8);
+        const h = Math.max(maxY - minY, 8);
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        const ratio = Math.min(0.25, Math.max(0.08, Math.min(cw / w, ch / h) * 0.55));
+        if (typeof (cam as any).animatedSetState === 'function') {
+          (cam as any).animatedSetState({ x: cx, y: cy, ratio }, { duration: 1000 });
+        } else {
+          cam.setState({ x: cx, y: cy, ratio });
+        }
       }
     } catch (err) {
       console.error('Failed to fetch subgraph:', err);
