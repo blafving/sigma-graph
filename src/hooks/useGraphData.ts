@@ -46,6 +46,11 @@ export function useGraphData() {
     let edgesDuplicate = 0;
     let nodesCreated = 0;
     for (const rel of data.relationships) {
+      // Skip malformed relationships (null/empty endpoints) instead of crashing the load
+      if (!rel.source || !rel.target) {
+        edgesSkipped++;
+        continue;
+      }
       // Ensure both endpoints exist — add missing nodes from edge references
       if (!graph.hasNode(rel.source)) {
         const parts = rel.source.split(':');
