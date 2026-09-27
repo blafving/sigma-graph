@@ -40,7 +40,30 @@ async function waitForUrl(url, tries = 60) {
 }
 
 // --- what the API says the map should be ------------------------------------
-const ref = await (await fetch(`${API}/v2/graph?limit=20000`)).json();
+// Cloud Run scales to zero, so the very first request of a run can fail. Retry the baseline,
+// but fail loudly with the status/body: a TypeError here once read like a broken graph.
+async function fetchBaseline(tries = 8) {
+  let last = 'no attempt';
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      const res = await fetch(`${API}/v2/graph?limit=20000`);
+      if (!res.ok) {
+        last = `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
+      } else {
+        const ref = await res.json();
+        if (!Array.isArray(ref.nodes) || !Array.isArray(ref.edges)) {
+          throw new Error(`unexpected /v2/graph shape: ${JSON.stringify(ref).slice(0, 200)}`);
+        }
+        return ref;
+      }
+    } catch (err) {
+      last = String(err).slice(0, 200);
+    }
+    await sleep(1500);
+  }
+  throw new Error(`cannot read the API baseline from ${API}: ${last}`);
+}
+const ref = await fetchBaseline();
 const positioned = ref.nodes.filter((n) => Number.isFinite(n.x) && Number.isFinite(n.y));
 const ids = new Set(positioned.map((n) => n.id));
 const pairs = new Set(
