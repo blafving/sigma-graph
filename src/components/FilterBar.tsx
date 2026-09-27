@@ -1,3 +1,4 @@
+import { memo } from 'react';
 interface FilterBarProps {
   searchQuery: string;
   onSearchChange: (q: string) => void;
@@ -7,7 +8,7 @@ interface FilterBarProps {
   onToggleType: (type: string) => void;
 }
 
-export function FilterBar({
+function FilterBarBase({
   searchQuery,
   onSearchChange,
   allTypes,
@@ -137,3 +138,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
   },
 };
+
+/**
+ * Memoised: a camera move updates the zoom level in context, and this panel
+ * is prop-driven only. Without memo it re-walks the whole graph on every zoom tick.
+ */
+export const FilterBar = memo(FilterBarBase);

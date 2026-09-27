@@ -8,16 +8,11 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:ui": "playwright test --ui"
+    "gate": "node e2e/graph-gate.mjs"
   },
   "dependencies": {
     "@react-sigma/core": "^5.0.6",
-    "@react-sigma/graph-search": "^5.0.6",
-    "@react-sigma/layout-forceatlas2": "^5.0.6",
-    "@react-sigma/minimap": "^5.0.6",
     "graphology": "^0.26.0",
-    "graphology-layout": "^0.6.1",
-    "graphology-layout-forceatlas2": "^0.10.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router": "^7.16.0",

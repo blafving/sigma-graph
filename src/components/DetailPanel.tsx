@@ -1,3 +1,4 @@
+import { memo } from 'react';
 interface DetailPanelProps {
   node: {
     id: string;
@@ -14,7 +15,7 @@ interface DetailPanelProps {
   onClose: () => void;
 }
 
-export function DetailPanel({ node, onClose }: DetailPanelProps) {
+function DetailPanelBase({ node, onClose }: DetailPanelProps) {
   const hasNode = node !== null;
 
   return (
@@ -178,3 +179,9 @@ const styles: Record<string, React.CSSProperties> = {
     marginLeft: 4,
   },
 };
+
+/**
+ * Memoised: a camera move updates the zoom level in context, and this panel
+ * is prop-driven only. Without memo it re-walks the whole graph on every zoom tick.
+ */
+export const DetailPanel = memo(DetailPanelBase);

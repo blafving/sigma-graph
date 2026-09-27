@@ -1,370 +1,163 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  SigmaContainer,
-  useSigma,
-  useCamera,
-  useRegisterEvents,
-  ControlsContainer,
-  ZoomControl,
-} from '@react-sigma/core';
-import { CustomMiniMap } from './CustomMiniMap';
-import { LayoutForceAtlas2Control, useLayoutForceAtlas2 } from '@react-sigma/layout-forceatlas2';
-import { useGraphData } from '../hooks/useGraphData';
-import { useGraphUi } from '../GraphUiContext';
+/**
+ * Explorer shell: owns the API query, the selection, and sigma's settings.
+ *
+ * Everything that touches sigma lives in `GraphCanvas`; everything that touches HTTP lives in
+ * `hooks/useGraphData` + `lib/api-client`. Filters are API params, so a chip toggle is a request,
+ * not a graph walk - and the group universe is fixed by the first unfiltered load, otherwise
+ * hiding a group makes "everything visible" true and quietly refetches the whole map.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SigmaContainer } from '@react-sigma/core';
+import type { Settings as SigmaSettings } from 'sigma/settings';
+import { fetchNode } from '../lib/api-client';
+import type { GraphQuery } from '../lib/api-client';
+import { createLabelPainters } from '../lib/labelPainters';
+import { toPanelDetail } from '../lib/detail';
 import { useBackendStatus } from '../hooks/useBackendStatus';
-import { FilterBar } from './FilterBar';
-import { NodeList } from './NodeList';
+import { useGraphData } from '../hooks/useGraphData';
+import { CanvasLayer } from './GraphCanvas';
+import type { FocusRef } from './GraphCanvas';
 import { DetailPanel } from './DetailPanel';
-import { StatsBar } from './StatsBar';
-import { StatusIndicator } from './StatusIndicator';
-import { fetchTypeCounts } from '../lib/api-client';
+import { FilterBar } from './FilterBar';
 import { GraphUiContext } from '../GraphUiContext';
 import type { GraphNodeDetail } from '../GraphUiContext';
+import { NodeList } from './NodeList';
+import { StatsBar } from './StatsBar';
+import { graphStyles as styles } from './graphStyles';
 
-// ---------------------------------------------------------------------------
-// SigmaCanvasInner: everything that MUST live inside the SigmaContainer.
-// The graph arrives via the `graph` prop on SigmaContainer (built at shell
-// level), so no useLoadGraph here. Renders only canvas overlays + event wiring.
-// ---------------------------------------------------------------------------
-function SigmaCanvasInner() {
-  const sigma = useSigma();
-  const { goto } = useCamera();
-  const ui = useGraphUi();
-  const { status: backendStatus, lastChecked } = useBackendStatus();
-  const { setSelectedNode, searchQuery, visibleTypes } = ui;
-
-  const [isLayoutRunning, setIsLayoutRunning] = useState(false);
-  const [filterTick, setFilterTick] = useState(0);
-  const focusedNodeRef = useRef<string | null>(null);
-  const userInteractedRef = useRef(false);
-  const zoomLevel = ui.zoomLevel;
-  const layoutAppliedRef = useRef(false);
-
-  // Layout runs once after the graph is present
-  const layout = useLayoutForceAtlas2({
-    iterations: 100,
-    settings: { scalingRatio: 2, strongGravityMode: true, barnesHutOptimize: true, barnesHutTheta: 0.5 },
-  });
-
-  useEffect(() => {
-    const g = sigma.getGraph();
-    if (!g || g.order === 0 || !ui.graphLoaded) return;
-    if (layoutAppliedRef.current) return;
-    layoutAppliedRef.current = true;
-
-    setIsLayoutRunning(true);
-    ui.setIsLayoutRunning(true);
-
-    // FA2 degenerates when every node starts at (0,0) - seed an initial
-    // random spread first so forces can separate the nodes.
-    const g0 = sigma.getGraph();
-    if (g0 && g0.order > 0) {
-      g0.forEachNode((node) => {
-        g0.setNodeAttribute(node, 'x', Math.random() * 20 - 10);
-        g0.setNodeAttribute(node, 'y', Math.random() * 20 - 10);
-      });
-    }
-
-    layout.assign();
-
-    // Normalize the layout to a fixed, readable spread (~60 units wide) so the
-    // map is navigable: the minimap boundary, camera clamps and fly all rely on
-    // meaningful world coordinates. FA2 alone collapses this graph to ~2 units.
-    const gl = sigma.getGraph();
-    if (gl && gl.order > 0) {
-      let mnX = Infinity, mxX = -Infinity, mnY = Infinity, mxY = -Infinity;
-      gl.forEachNode((_, a) => {
-        if (typeof a.x === 'number' && typeof a.y === 'number') {
-          mnX = Math.min(mnX, a.x); mxX = Math.max(mxX, a.x);
-          mnY = Math.min(mnY, a.y); mxY = Math.max(mxY, a.y);
-        }
-      });
-      const w = mxX - mnX, h = mxY - mnY;
-      const TARGET = 60;
-      const sx = w > 0.001 ? TARGET / w : 1;
-      const sy = h > 0.001 ? TARGET / h : 1;
-      const cx = (mnX + mxX) / 2, cy = (mnY + mxY) / 2;
-      gl.forEachNode((n, a) => {
-        if (typeof a.x !== 'number' || typeof a.y !== 'number') return;
-        gl.setNodeAttribute(n, 'x', (a.x - cx) * sx);
-        gl.setNodeAttribute(n, 'y', (a.y - cy) * sy);
-      });
-      console.log('[LAYOUT] rescaled to ~' + TARGET + ' units (was ' + w.toFixed(1) + 'x' + h.toFixed(1) + ')');
-    }
-
-    setTimeout(() => {
-      try {
-        const gg = sigma.getGraph();
-        if (gg && gg.order > 0 && !userInteractedRef.current) goto({ x: 0, y: 0, ratio: 0.5 });
-      } catch { /* ignore */ }
-      setIsLayoutRunning(false);
-      ui.setIsLayoutRunning(false);
-    }, 1500);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sigma, ui.graphLoaded, goto, layout]);
-
-  // Apply filters (sigma v3 native `hidden` attribute)
-  useEffect(() => {
-    const sGraph = sigma.getGraph();
-    if (!sGraph || sGraph.order === 0) return;
-
-    const q = searchQuery.trim().toLowerCase();
-    const keep = new Set<string>();
-    sGraph.forEachNode((node, attrs) => {
-      const typeOk = visibleTypes.size === 0 || visibleTypes.has(attrs.nodeType as string);
-      const queryOk = !q || String(attrs.label ?? '').toLowerCase().includes(q);
-      if (typeOk && queryOk) keep.add(node);
-    });
-
-    sGraph.forEachNode((node) => {
-      const shouldHide = !keep.has(node);
-      if (Boolean(sGraph.getNodeAttribute(node, 'hidden')) !== shouldHide) {
-        sGraph.setNodeAttribute(node, 'hidden', shouldHide);
-      }
-    });
-    sGraph.forEachEdge((edge) => {
-      const [src, tgt] = sGraph.extremities(edge);
-      const shouldHide = !(src && tgt && keep.has(src) && keep.has(tgt));
-      if (Boolean(sGraph.getEdgeAttribute(edge, 'hidden')) !== shouldHide) {
-        sGraph.setEdgeAttribute(edge, 'hidden', shouldHide);
-      }
-    });
-
-    sigma.refresh();
-    setFilterTick((t) => t + 1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, visibleTypes, ui.graphLoaded, sigma]);
-
-  // Track zoom
-  useEffect(() => {
-    const updateZoom = () => {
-      try { ui.setZoomLevel(1 / sigma.getCamera().ratio); } catch { /* ignore */ }
-    };
-    const cam = sigma.getCamera();
-    cam.on('updated', updateZoom);
-    updateZoom();
-    return () => { cam.off('updated', updateZoom); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sigma]);
-
-  // Click node -> drill-down panel
-  const restoreEmphasis = () => {
-    if (!focusedNodeRef.current) return;
-    const g = sigma.getGraph();
-    if (!g) return;
-    g.forEachNode((n) => {
-      g.setNodeAttribute(n, 'size', 4);
-      g.setNodeAttribute(n, 'labelColor', '#e0e0e0');
-      g.setNodeAttribute(n, 'color', '#333');
-    });
-    focusedNodeRef.current = null;
-    sigma.refresh();
-  };
-
-  const onNodeClick = async ({ node }: { node: string }) => {
-    userInteractedRef.current = true;
-    restoreEmphasis();
-    setSelectedNode(null);
-    try {
-      const { fetchSubgraph } = await import('../lib/api-client');
-      const [label, name] = node.split(':');
-      const subgraph = await fetchSubgraph(label, name, 2);
-      const relationships = (subgraph.relationships || []).map((rel: any) => ({
-        type: rel.type, source: rel.source, target: rel.target,
-        targetLabel: rel.target.split(':')[0],
-      }));
-      const g = sigma.getGraph();
-      const centerNode = subgraph.nodes.find((n: any) => n.id === node);
-      if (centerNode) {
-        setSelectedNode({ id: centerNode.id, label: centerNode.label, name: centerNode.name, properties: centerNode.properties, relationships });
-      } else if (g && g.hasNode(node)) {
-        const attrs = g.getNodeAttributes(node);
-        setSelectedNode({
-          id: node,
-          label: (attrs.nodeType as string) || label,
-          name: (attrs.label as string) || name,
-          properties: (attrs.properties as Record<string, unknown>) || {},
-          relationships,
-        });
-      }
-      // Animated camera fly (~1s): frame the clicked node + its closest neighbors,
-      // so the viewer sees where on the map the node is. Fit the neighborhood bbox.
-      const cam = sigma.getCamera();
-      const nodeData2 = g ? g.getNodeAttributes(node) : null;
-      if (cam && nodeData2 && typeof nodeData2.x === 'number' && typeof nodeData2.y === 'number') {
-        const ratio = 0.3; // ~3.3x zoom: node + clear surrounding map context
-        if (typeof (cam as any).animatedSetState === 'function') {
-          (cam as any).animatedSetState({ x: nodeData2.x, y: nodeData2.y, ratio }, { duration: 1000 });
-        } else {
-          cam.setState({ x: nodeData2.x, y: nodeData2.y, ratio });
-        }
-      }
-
-      // Emphasize the node + direct neighbors with a bright accent; leave the
-      // rest of the map at normal render so the viewer SEES where on the map
-      // the node is (dim-to-invisible made the canvas look blank).
-      if (g) {
-        const neighbors = new Set(g.neighbors(node));
-        neighbors.add(node);
-        g.forEachNode((n) => {
-          const related = neighbors.has(n);
-          g.setNodeAttribute(n, 'color', related ? '#4fc3f7' : '#5a6b8c');
-          g.setNodeAttribute(n, 'size', related ? 8 : 3);
-          g.setNodeAttribute(n, 'labelColor', related ? '#ffffff' : '#7a8aa8');
-        });
-        sigma.refresh();
-        focusedNodeRef.current = node;
-      }
-    } catch (err) {
-      console.error('Failed to fetch subgraph:', err);
-      setSelectedNode(null);
-    }
-  };
-
-  const registerEvents = useRegisterEvents();
-
-  // Hover dim + node click
-  useEffect(() => {
-    registerEvents({
-      clickStage: restoreEmphasis,
-      clickNode: onNodeClick,
-      enterNode: (event: { node: string }) => {
-        const g = sigma.getGraph();
-        if (!g) return;
-        const neighbors = new Set(g.neighbors(event.node));
-        neighbors.add(event.node);
-        g.forEachNode((node) => {
-          g.setNodeAttribute(node, 'labelColor', neighbors.has(node) ? '#e0e0e0' : '#333');
-          g.setNodeAttribute(node, 'size', neighbors.has(node) ? 4 : 2);
-        });
-        sigma.refresh();
-      },
-      leaveNode: () => {
-        const g = sigma.getGraph();
-        if (!g) return;
-        g.forEachNode((node) => {
-          g.setNodeAttribute(node, 'labelColor', '#e0e0e0');
-          g.setNodeAttribute(node, 'size', 4);
-        });
-        sigma.refresh();
-      },
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registerEvents, onNodeClick, restoreEmphasis]);
-
-  // Listen for node-focus requests from the sidebar
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const node = (e as CustomEvent).detail?.node;
-      if (node) onNodeClick({ node });
-    };
-    window.addEventListener('sigma:focus-node', handler);
-    return () => window.removeEventListener('sigma:focus-node', handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onNodeClick]);
-
-  // Stats
-  const graph = sigma.getGraph();
-  void filterTick;
-  let visibleNodeCount = 0;
-  let visibleEdgeCount = 0;
-  graph.forEachNode((_, a) => { if (!a.hidden) visibleNodeCount++; });
-  graph.forEachEdge((e) => { if (!graph.getEdgeAttribute(e, 'hidden')) visibleEdgeCount++; });
-
-  return (
-    <>
-      <ControlsContainer position="bottom-right"><ZoomControl /></ControlsContainer>
-      <ControlsContainer position="bottom-left"><LayoutForceAtlas2Control /></ControlsContainer>
-      <ControlsContainer position="top-right"><CustomMiniMap width={180} height={130} /></ControlsContainer>
-      {isLayoutRunning && <div style={styles.layoutStatus}>Computing layout...</div>}
-      <div style={styles.statsOverlayRow}>
-        <StatsBar
-          totalNodes={ui.typeCounts.size > 0 ? Array.from(ui.typeCounts.values()).reduce((s: number, c: number) => s + c, 0) : visibleNodeCount}
-          visibleNodes={visibleNodeCount}
-          visibleEdges={visibleEdgeCount}
-          zoom={zoomLevel}
-          backendStatus={backendStatus}
-          lastChecked={lastChecked}
-          typeCount={ui.allTypes.size}
-        />
-        <StatusIndicator status={backendStatus} lastChecked={lastChecked} />
-      </div>
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// GraphView: the PAGE SHELL. Sidebars are SIBLINGS of the sigma container.
-// ---------------------------------------------------------------------------
 export function GraphView() {
-  const { graphRef, loadGraph: loadData } = useGraphData();
-  const [graph, setGraph] = useState<any | null>(null);
-
+  const [allGroups, setAllGroups] = useState<Set<string>>(() => new Set());
+  const [visibleGroups, setVisibleGroups] = useState<Set<string>>(() => new Set());
   const [selectedNode, setSelectedNode] = useState<GraphNodeDetail | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
-  const [allTypes, setAllTypes] = useState<Set<string>>(new Set());
-  const [visibleTypeCounts, setVisibleTypeCounts] = useState<Map<string, number>>(new Map());
-  const [graphLoaded, setGraphLoaded] = useState(false);
-  const [typeCounts, setTypeCounts] = useState<Map<string, number>>(new Map());
-  const [isLayoutRunning, setIsLayoutRunning] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
+  const hoveredRef = useRef<string | null>(null);
+  const focusRef = useRef<{ id: string; neighbours: Set<string> } | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const stageWidthRef = useRef(0);
+  const detailTokenRef = useRef(0);
+  const { status: backendStatus, lastChecked } = useBackendStatus();
 
-  // Load the graph once at shell level (shared with sigma + sidebars)
+  const query = useMemo<GraphQuery>(() => {
+    // First load has no filter to send, and "every group" is the same request as "no filter".
+    if (allGroups.size === 0 || visibleGroups.size === allGroups.size) return {};
+    return { groups: Array.from(visibleGroups) };
+  }, [allGroups, visibleGroups]);
+
+  const { graph, stats, loading, error, revision, reload } = useGraphData(query);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const g = await loadData();
-        if (cancelled) return;
-        setGraph(g);
-        setGraphLoaded(true);
-        // discover types + counts from the loaded graph
-        const types = new Set<string>();
-        const counts = new Map<string, number>();
-        g.forEachNode((_, attrs) => {
-          const t = attrs.nodeType as string;
-          if (t) {
-            types.add(t);
-            counts.set(t, (counts.get(t) || 0) + 1);
-          }
-        });
-        setAllTypes(types);
-        setVisibleTypes(new Set(types));
-        setVisibleTypeCounts(counts);
-        try {
-          const tc = await fetchTypeCounts();
-          setTypeCounts(new Map(tc.types.map((t: any) => [t.label, t.count])));
-        } catch { /* ignore */ }
-      } catch (err) {
-        console.error('Failed to load graph:', err);
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadData]);
+    if (stats.groups.size === 0) return;
+    setAllGroups((prev) => (prev.size ? prev : new Set(stats.groups.keys())));
+    setVisibleGroups((prev) => (prev.size ? prev : new Set(stats.groups.keys())));
+  }, [stats]);
 
-  const toggleType = (type: string) => {
-    setVisibleTypes((prev) => {
+  const stageWidth = useCallback(() => stageWidthRef.current, []);
+
+  const settings = useMemo<Partial<SigmaSettings>>(() => {
+    const painters = createLabelPainters(stageWidth);
+    // Hover wins over selection so the map reacts to the pointer even mid-selection.
+    const focusOf = (): string | null => hoveredRef.current ?? focusRef.current?.id ?? null;
+
+    return {
+      ...painters,
+      defaultNodeColor: '#8fa3c0',
+      defaultEdgeColor: '#48566e',
+      defaultEdgeType: 'line',
+      renderLabels: true,
+      labelSize: 13,
+      labelWeight: '600',
+      labelRenderedSizeThreshold: 8,
+      labelDensity: 0.4,
+      labelGridCellSize: 80,
+      zIndex: true,
+      minCameraRatio: 0.01,
+      // Edge events cost a picking pass per pointer move and nothing listens to them (PAR-27).
+      enableEdgeEvents: false,
+      hideLabelsOnMove: true,
+      // Reducer output REPLACES a node's attributes for the frame (sigma does not merge it), so
+      // everything is spread and `x`/`y` must survive or sigma throws.
+      nodeReducer: (node, data) => {
+        const out = { ...data };
+        const focus = focusOf();
+        if (!focus || focus === node || focusRef.current?.neighbours.has(node)) return out;
+        out.color = data.dimColor ?? data.color;
+        out.size = (data.size ?? 2) * 0.75;
+        return out;
+      },
+      edgeReducer: (edge, data) => {
+        const out = { ...data };
+        const focus = focusOf();
+        if (!focus || !graph.hasEdge(edge)) return out;
+        if (graph.source(edge) === focus || graph.target(edge) === focus) {
+          out.color = '#cfe4ff';
+          out.size = 1.4;
+          out.zIndex = 1;
+          return out;
+        }
+        out.color = data.dimColor ?? data.color;
+        out.size = 0.25;
+        return out;
+      },
+    };
+  }, [graph, stageWidth]);
+
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const measure = () => {
+      stageWidthRef.current = el.clientWidth;
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Newest request wins: two quick clicks must not let the first reply overwrite the second.
+  const openNode = useCallback((uid: string) => {
+    const token = ++detailTokenRef.current;
+    void fetchNode(uid)
+      .then((detail) => {
+        if (token === detailTokenRef.current) setSelectedNode(toPanelDetail(detail));
+      })
+      .catch((err: unknown) => {
+        if (token !== detailTokenRef.current) return;
+        console.error('detail fetch failed', err);
+      });
+  }, []);
+
+  const closeDetail = useCallback(() => setSelectedNode(null), []);
+
+  const toggleType = useCallback((type: string) => {
+    setVisibleGroups((prev) => {
       const next = new Set(prev);
       if (next.has(type)) next.delete(type);
       else next.add(type);
       return next;
     });
-  };
+  }, []);
 
   const value = useMemo(
     () => ({
-      selectedNode, setSelectedNode,
-      searchQuery, setSearchQuery,
-      visibleTypes, allTypes, toggleType, visibleTypeCounts,
-      graphLoaded, setGraphLoaded,
-      typeCounts, setTypeCounts,
-      zoomLevel, setZoomLevel,
-      isLayoutRunning, setIsLayoutRunning,
+      selectedNode,
+      setSelectedNode,
+      searchQuery,
+      setSearchQuery,
+      visibleTypes: visibleGroups,
+      allTypes: allGroups,
+      toggleType,
+      visibleTypeCounts: stats.groups,
+      graphLoaded: revision > 0,
+      setGraphLoaded: () => undefined,
+      typeCounts: stats.groups,
+      setTypeCounts: () => undefined,
+      zoomLevel,
+      setZoomLevel,
+      isLayoutRunning: false,
+      setIsLayoutRunning: () => undefined,
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedNode, searchQuery, visibleTypes, allTypes, visibleTypeCounts, graphLoaded, typeCounts, zoomLevel, isLayoutRunning],
+    [selectedNode, searchQuery, visibleGroups, allGroups, toggleType, stats, revision, zoomLevel],
   );
 
   return (
@@ -374,9 +167,9 @@ export function GraphView() {
           <FilterBar
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            allTypes={allTypes}
-            visibleTypes={visibleTypes}
-            typeCounts={typeCounts}
+            allTypes={allGroups}
+            visibleTypes={visibleGroups}
+            typeCounts={stats.groups}
             onToggleType={toggleType}
           />
         </div>
@@ -384,66 +177,54 @@ export function GraphView() {
         <div style={styles.middleRow}>
           <div style={styles.leftSidebar}>
             <NodeList
-              graph={graphRef.current}
-              allTypes={allTypes}
-              visibleTypes={visibleTypes}
-              visibleTypeCounts={visibleTypeCounts}
+              graph={graph}
+              allTypes={allGroups}
+              visibleTypes={visibleGroups}
+              visibleTypeCounts={stats.groups}
               onToggleType={toggleType}
               searchQuery={searchQuery}
               selectedNode={selectedNode}
-              onNodeClick={({ node }) => {
-                window.dispatchEvent(new CustomEvent('sigma:focus-node', { detail: { node } }));
-              }}
+              onNodeClick={({ node }) => openNode(node)}
             />
           </div>
 
-          <div style={styles.centerColumn}>
-            <SigmaContainer
-              graph={graph ?? undefined}
-              style={{ width: '100%', height: '100%' }}
-              settings={{
-                // Camera boundaries: max zoom-out keeps all nodes in view (observed
-                // fit-all ratio ~0.5 -> 0.55 with margin); max zoom-in stops about
-                // when a single node would fill the screen (0.06 ~ 8x deeper).
-                minCameraRatio: 0.06,
-                maxCameraRatio: 0.55,
-                defaultNodeType: 'circle',
-                defaultNodeColor: '#333',
-                labelColor: { attribute: 'labelColor', color: '#e0e0e0' },
-                defaultEdgeType: 'line',
-                defaultEdgeColor: '#aaa',
-                labelSize: 14,
-                labelFont: 'sans-serif',
-                labelRenderedSizeThreshold: 15,
-                labelDensity: 0.07,
-                labelGridCellSize: 60,
-                enableEdgeEvents: true,
-              }}
-            >
-              <SigmaCanvasInner />
+          <div style={styles.centerColumn} ref={stageRef}>
+            <SigmaContainer graph={graph} style={styles.stage} settings={settings}>
+              <CanvasLayer
+                revision={revision}
+                hoveredRef={hoveredRef}
+                focusRef={focusRef as FocusRef}
+                onOpen={openNode}
+                onClose={closeDetail}
+              />
             </SigmaContainer>
+            {loading && <div style={styles.overlay}>Loading graph…</div>}
+            {!loading && error && (
+              <div style={styles.overlay}>
+                <div style={styles.overlayText}>{error}</div>
+                <button style={styles.retry} onClick={reload} type="button">
+                  Retry
+                </button>
+              </div>
+            )}
+            <div style={styles.statsRow}>
+              <StatsBar
+                totalNodes={graph.order}
+                visibleNodes={graph.order}
+                visibleEdges={graph.size}
+                zoom={zoomLevel}
+                backendStatus={backendStatus}
+                lastChecked={lastChecked}
+                typeCount={allGroups.size}
+              />
+            </div>
           </div>
 
           <div style={styles.rightSidebar}>
-            <DetailPanel node={selectedNode} onClose={() => setSelectedNode(null)} />
+            <DetailPanel node={selectedNode} onClose={closeDetail} />
           </div>
         </div>
       </div>
     </GraphUiContext.Provider>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  shell: {
-    display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw',
-    overflow: 'hidden', background: '#1a1a2e', color: '#e0e0e0',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-  },
-  topBar: { flexShrink: 0, position: 'relative', zIndex: 10 },
-  middleRow: { display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative', zIndex: 10 },
-  leftSidebar: { width: 280, flexShrink: 0, position: 'relative', zIndex: 20, overflowY: 'auto', background: '#0a0a14', borderRight: '2px solid #1e3a5f' },
-  centerColumn: { flex: 1, minWidth: 0, position: 'relative', overflow: 'hidden', zIndex: 1 },
-  rightSidebar: { width: 300, flexShrink: 0, position: 'relative', zIndex: 20, overflowY: 'auto', background: '#070b14', borderLeft: '2px solid #1e3a5f' },
-  statsOverlayRow: { position: 'absolute', left: 0, right: 0, bottom: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 30, pointerEvents: 'none', padding: '0 16px', boxSizing: 'border-box' },
-  layoutStatus: { position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', background: 'rgba(30, 30, 50, 0.9)', color: '#aaa', padding: '6px 16px', borderRadius: 4, fontSize: 12, zIndex: 20, pointerEvents: 'none' },
-};

@@ -1,50 +1,76 @@
-const API_BASE = import.meta.env.VITE_API_URL || 'https://research-2-912098182204.us-central1.run.app';
+/**
+ * v2 API client — `/v2/*` only.
+ *
+ * The legacy label-per-type endpoints (`/graph/full`, `/graph/types`, `POST /search`,
+ * `/graph/{label}/{name}`) are not used by this app. They still exist server-side for the
+ * pre-v2 explorer and disappear with the legacy purge (PAR-76), so nothing here may reach
+ * for them.
+ */
+export const API_BASE: string =
+  import.meta.env.VITE_API_URL || 'https://research-2-dqvr2eoj2a-uc.a.run.app';
 
-export interface ApiNode {
-  label: string;
-  name: string;
-  properties: Record<string, unknown>;
-}
-
-export interface ApiFullNode {
+export interface V2Node {
   id: string;
-  label: string;
   name: string;
-  properties: Record<string, unknown>;
+  type: string;
+  typeGroup: string;
+  degree: number;
+  description?: string | null;
+  filePath?: string | null;
+  stub?: boolean;
+  x?: number | null;
+  y?: number | null;
 }
 
-export interface ApiRelationship {
+export interface V2Edge {
   source: string;
   target: string;
   type: string;
+  /** Relation names merged into this edge by the API. */
+  fields?: string[];
+}
+
+export interface V2GraphResponse {
+  count: number;
+  edgeCount: number;
+  nodes: V2Node[];
+  edges: V2Edge[];
+  layout?: { precomputed?: boolean; positionsPresent?: number } | null;
+}
+
+export interface GraphQuery {
+  groups?: string[];
+  types?: string[];
+  minDegree?: number;
+  limit?: number;
+}
+
+export interface V2Neighbour {
+  id: string;
+  name: string;
+  type: string;
+  relation: string;
+  direction: 'in' | 'out';
+  stub?: boolean;
+}
+
+export interface V2NodeDetail {
+  id: string;
+  name: string;
+  type: string;
+  typeGroup: string;
+  degree: number;
+  description?: string | null;
+  filePath?: string | null;
+  stub?: boolean;
+  neighbours: V2Neighbour[];
   properties: Record<string, unknown>;
 }
 
-export interface FullGraphResponse {
-  nodes: ApiFullNode[];
-  relationships: ApiRelationship[];
-}
-
-export interface TypeCount {
-  label: string;
+export interface V2SearchResponse {
   count: number;
-}
-
-export interface TypeCountsResponse {
-  types: TypeCount[];
-}
-
-export interface SubgraphResponse {
-  nodes: ApiFullNode[];
-  relationships: ApiRelationship[];
-  center: { label: string; name: string };
-  hops: number;
-}
-
-export interface SearchResponse {
-  results: ApiNode[];
   query: string;
-  count: number;
+  results: Array<{ id: string; name: string; type: string; description?: string }>;
 }
 
 export interface HealthResponse {
@@ -53,48 +79,57 @@ export interface HealthResponse {
   version: string;
 }
 
-export async function fetchHealth(): Promise<HealthResponse> {
-  const res = await fetch(`${API_BASE}/health`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
-  return res.json();
+export class ApiError extends Error {
+  status: number;
+  url: string;
+
+  constructor(status: number, url: string) {
+    super(`API ${status} from ${url}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.url = url;
+  }
 }
 
-export async function fetchFullGraph(limit = 10000): Promise<FullGraphResponse> {
-  console.log('[API] fetchFullGraph: starting, limit=', limit);
-  const res = await fetch(`${API_BASE}/graph/full?limit=${limit}`, { cache: 'no-store' });
-  console.log('[API] graph/full: status=', res.status);
-  if (!res.ok) throw new Error(`Failed to fetch full graph: ${res.status}`);
-  const data = await res.json();
-  console.log('[API] full graph: nodes=', data.nodes?.length || 0, 'rels=', data.relationships?.length || 0);
-  return {
-    nodes: data.nodes || [],
-    relationships: data.relationships || [],
-  };
+export function graphUrl(q: GraphQuery = {}): string {
+  const p = new URLSearchParams();
+  if (q.groups?.length) p.set('groups', q.groups.join(','));
+  if (q.types?.length) p.set('types', q.types.join(','));
+  if (typeof q.minDegree === 'number' && q.minDegree > 0) p.set('minDegree', String(q.minDegree));
+  p.set('limit', String(q.limit ?? 20000));
+  return `${API_BASE}/v2/graph?${p.toString()}`;
 }
 
-export async function fetchTypeCounts(): Promise<TypeCountsResponse> {
-  const res = await fetch(`${API_BASE}/graph/types`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`Failed to fetch type counts: ${res.status}`);
-  const data = await res.json();
-  const types: TypeCount[] = data.types || [];
-  return { types };
+async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, { cache: 'no-store', signal });
+  if (!res.ok) throw new ApiError(res.status, url);
+  return (await res.json()) as T;
 }
 
-export async function searchNodes(query: string, limit = 50): Promise<SearchResponse> {
-  const res = await fetch(`${API_BASE}/search`, {
-    method: 'POST',
-    cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ q: query, limit }),
-  });
-  if (!res.ok) throw new Error(`Search failed: ${res.status}`);
-  return res.json();
+/** Full graph with precomputed positions. Filters are API params, never client-side scans. */
+export function fetchGraph(q: GraphQuery = {}, signal?: AbortSignal): Promise<V2GraphResponse> {
+  return getJson<V2GraphResponse>(graphUrl(q), signal);
 }
 
-export async function fetchSubgraph(label: string, name: string, hops = 2): Promise<SubgraphResponse> {
-  const res = await fetch(`${API_BASE}/graph/${encodeURIComponent(label)}/${encodeURIComponent(name)}?hops=${hops}`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`Subgraph fetch failed: ${res.status}`);
-  return res.json();
+/** One node plus its typed, directed neighbourhood. */
+export function fetchNode(uid: string, signal?: AbortSignal, limit = 300): Promise<V2NodeDetail> {
+  return getJson<V2NodeDetail>(
+    `${API_BASE}/v2/node/${encodeURIComponent(uid)}?limit=${limit}`,
+    signal,
+  );
 }
 
-export { API_BASE };
+export function searchNodes(
+  query: string,
+  limit = 25,
+  signal?: AbortSignal,
+): Promise<V2SearchResponse> {
+  return getJson<V2SearchResponse>(
+    `${API_BASE}/v2/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+    signal,
+  );
+}
+
+export function fetchHealth(): Promise<HealthResponse> {
+  return getJson<HealthResponse>(`${API_BASE}/health`);
+}

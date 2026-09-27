@@ -19,17 +19,43 @@ Reference implementation for the hard parts: `../preview/v2.html` and `../previe
 - `GET /v2/node/{uid}?limit` → flat node + `neighbours` (typed, with direction)
 - `GET /v2/search?q&limit`
 - `GET /v2/node/{uid}/document` → `{ id, filePath, markdown }` — see "Document reader"
-- Positions arrive precomputed (`x`, `y`). **No client-side force layout.**
+- Positions arrive precomputed (`x`, `y`). **No client-side force layout.** A node without finite
+  `x`/`y` is dropped and counted, never sent to the origin: sigma throws on a node that lacks
+  numeric coordinates, and a NaN in the layout takes the whole stage down with it.
+- **One edge per ordered pair.** `/v2/graph` emits one record per *relation type*: 2,019 relations
+  over 1,592 node pairs (419 pairs carry `RELATED_TO` + `MENTIONS`, up to 3 types on a pair).
+  graphology's non-multi `Graph` - the only kind sigma accepts - holds one edge per ordered pair and
+  throws on the second, so `buildGraph` keys edges `source\u0000target` and merges the remaining
+  relation names onto that edge (`relations`, `fieldNames`). The map therefore renders 1,592 edges;
+  `stats.relations` still reports 2,019 so nobody "fixes" the missing 427.
 - Filters, min-degree and search are API params. The client never filters by walking the graph.
+- The set of known groups is fixed by the **first unfiltered** load. Re-deriving it from a filtered
+  payload makes "everything visible" true while a group is hidden, which flips the query back to
+  unfiltered and refetches the whole map underneath the user (observed in the acceptance gate).
 
 ## Rendering contract
 - Hover / selection / filter emphasis via `nodeReducer` / `edgeReducer` + `sigma.refresh()`.
   Never `setNodeAttribute('color' | 'size' | 'labelColor')`, never a `baseColor` shadow attribute.
+  Emphasis handlers write refs; nothing writes to the graph outside the data layer.
+- A reducer's return value **replaces** the node's attributes for that frame - sigma does not merge
+  it - so reducers spread their input, and `x`/`y` must survive the spread or sigma throws.
+- sigma 3 has no `dimmed` display field: de-emphasis is a colour and size change. The dim variant of
+  every colour is precomputed in the data layer (`dimColor`) so a reducer never does string math
+  while the camera moves.
+- The panels are `memo`-wrapped. Zoom level lives in context, and an unmemoised `NodeList` re-walks
+  every group on every camera tick (O(groups x nodes) per frame).
 - Mount the renderer before the first fetch resolves, so a slow or failed request shows an
   error + retry instead of a dead stage.
-- Camera state is normalised display space. Focus =
-  `sigma.normalizationFunction({x, y})` → `camera.animate({ x, y, ratio }, { duration })`.
-  Writing `x`/`y` straight from node attributes is the black-canvas bug (PAR-21 / PAR-58).
+- Camera state is normalised display space (~0..1), never graph space. Focus =
+  `sigma.getNodeDisplayData(node)` → `camera.animate({ ...camera.getState(), x, y, ratio })`.
+  Writing `x`/`y` straight from node attributes is the black-canvas bug (PAR-21 / PAR-58): the
+  camera lands outside the stage and the canvas renders black with no error.
+  `getNodeDisplayData` is also what the library's own `useCamera().gotoNode()` uses, which is the
+  evidence that it is the right source. `sigma.normalizationFunction` computes the same thing but
+  is declared `private` in sigma 3's types, so it is not usable from a typed app. sigma 3 has no
+  `focus()`, `locate()`, `animatedZoomTo()`, `panic()` or `unfocus()`.
+- `camera.animate()` takes ratio as part of the state; `gotoNode` pans without zooming, so a
+  click-to-focus that also zooms needs the explicit state above.
 - Labels use custom `defaultDrawNodeLabel` / `defaultDrawNodeHover` painters: sigma 3 removed
   every label-contrast setting, its default hover painter fills a white plate, and it never
   flips a label at the stage edge. `forceLabel` on the focused node only.
@@ -49,6 +75,8 @@ Reference implementation for the hard parts: `../preview/v2.html` and `../previe
 
 ### 4. Filters
 - `typeGroup` chips + min-degree slider, both sent to the API. Counts shown per chip.
+- One request per chip toggle, with `groups=` in it; a toggle must never cause an unfiltered
+  request. (min-degree slider: Phase 2 - the data layer already sends `minDegree`.)
 
 ### 5. Detail panel (right sidebar)
 - Name, type/typeGroup, degree, description, properties, relationships (type → target, with
@@ -104,24 +132,48 @@ Kept as its own endpoint so `/v2/graph` and `/v2/node` payloads stay lean.
 - Editing or authoring notes from the UI.
 
 ## Performance targets
-- First paint of 1,185 nodes / 2,019 edges from the prod API under ~1.5s.
+- First paint of 1,185 nodes / 1,592 edges (2,019 relations) from the prod API under ~1.5s.
 - Hover/select cost is one reducer pass; no per-frame `setState`, no `sigma.refresh()` outside
   reducer invalidation.
 - 60fps pan/zoom at full graph size.
 
 ## Acceptance criteria (this build)
-- [ ] Click from list and canvas frames the node; canvas never blanks (regression test for the
-      coordinate bug that killed PAR-21 / PAR-58)
-- [ ] Hover + selection emphasis with a legible label plate at every zoom; label flips before
-      clipping at the right edge
-- [ ] Detail panel shows typed neighbours with direction from `/v2/node`
-- [ ] "Read more" opens a scrollable markdown column; no button on stubs; unresolved links inert;
-      `Esc` restores the panel
-- [ ] Filters, min-degree and search go through API params; stats bar counts match
-- [ ] Zero console errors, no "Maximum update depth exceeded", `tsc -b` clean
-- [ ] `GraphView` ≤300 LOC; whole frontend ≤ ~800 LOC (from 2,087)
+`npm run build && npm run gate` starts a preview, drives Chromium against the real API, derives
+every expectation from the API response (so it stays valid as the vault grows) and fails on the
+first broken rule. Last full run 2026-09-27 against prod, 1,185 nodes / 1,592 edges / 2,019
+relations:
+
+- [x] Node count, edge count and coordinates equal the API; nothing is laid out in the browser
+- [x] Canvas click frames the node within 60px of stage centre - it cannot be the off-stage camera
+      that blanked PAR-21 / PAR-58
+- [x] Detail panel lists every neighbour `/v2/node` returned (192 of 192 on the degree-192 hub)
+- [x] A chip toggle costs exactly one `groups=` request and never an unfiltered one
+- [x] Hover leaves the graph object untouched (emphasis is reducer-side)
+- [x] Zero console errors, no "Maximum update depth exceeded", `tsc -b` and `vite build` clean
+
+Still open:
+
+- [ ] Click from the sidebar list frames the node - `NodeList` only lists groups with <=50 nodes,
+      so it moves to `/v2/search` in Phase 2
+- [ ] Label legibility at every zoom + the right-edge label flip: validated by hand and in the
+      buildless preview, still needs pixel assertions here
+- [ ] Min-degree slider, reader behaviour, `Esc` ordering with the reader open (PAR-82)
+- [x] `GraphView` <=300 LOC (230; canvas layer 113, styles 80)
+- [ ] Whole frontend <= ~800 LOC (from 2,087). Now 1,773: the data + render layer I own is 992 and
+      the remaining 781 is four untouched panels. That target only closes when `NodeList` (175) is
+      replaced by a `/v2/search` list and `FilterBar`/`StatsBar` shrink in Phase 2 - until then the
+      honest number is here, not a wishful one.
 
 ## Changes
+- **2026-09-27 (PAR-78, Phase 0):** the v2 data layer is in. Typed `/v2/*` client, one stable
+  graphology instance refilled per query, server-computed layout only, reducer-side emphasis,
+  display-space camera focus. Parallel relations merge per node pair (2,019 relations -> 1,592
+  edges). Deleted `CustomMiniMap`, `StatusIndicator`, `useGraphEvents`, `useGraphFilters`,
+  `test-simple` and 5 layout/minimap packages; panels memoised. `e2e/graph-gate.mjs`
+  (`npm run gate`) is now the acceptance gate. The old `tests/ui.spec.ts` is deleted rather than
+  updated: it asserted the minimap canvas exists (removed above) and otherwise logged instead of
+  asserting, and `playwright.config.ts` went with it so there is one acceptance command, not two. `.env` was still pointing at a stale v1 Cloud Run
+  service and now names the v2 one.
 - **2026-09-27 (PAR-78):** minimap removed; document reader added (needs the body endpoint);
   data, render and camera contracts pinned to sigma 3 + `/v2`; precomputed layout replaces
   client-side ForceAtlas2; performance targets raised to the real graph size; acceptance criteria

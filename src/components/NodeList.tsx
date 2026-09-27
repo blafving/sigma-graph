@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { DirectedGraph } from 'graphology';
 import { labelToColor } from '../lib/color-palette';
 
@@ -13,7 +14,7 @@ interface NodeListProps {
   onNodeClick?: ({ node }: { node: string }) => void;
 }
 
-export function NodeList({
+function NodeListBase({
   graph,
   searchQuery,
   allTypes,
@@ -166,3 +167,9 @@ const styles = {
     cursor: 'pointer',
   },
 };
+
+/**
+ * Memoised: a camera move updates the zoom level in context, and this panel
+ * is prop-driven only. Without memo it re-walks the whole graph on every zoom tick.
+ */
+export const NodeList = memo(NodeListBase);
