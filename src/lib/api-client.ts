@@ -1,13 +1,15 @@
 /**
- * v2 API client — `/v2/*` only.
+ * Graph data client.
  *
- * The legacy label-per-type endpoints (`/graph/full`, `/graph/types`, `POST /search`,
- * `/graph/{label}/{name}`) are not used by this app. They still exist server-side for the
- * pre-v2 explorer and disappear with the legacy purge (PAR-76), so nothing here may reach
- * for them.
+ * Same functions the explorer has always called, but nothing here talks to a server any more:
+ * the whole graph is one published file (`app/export_static.py` writes it), loaded once, and
+ * `graph-store.ts` answers each question from it in the browser. The response shapes are the
+ * `/v2/*` API's, unchanged, so the rest of the app did not have to move.
  */
-export const API_BASE: string =
-  import.meta.env.VITE_API_URL || 'https://research-2-dqvr2eoj2a-uc.a.run.app';
+import { queryGraph, queryNode, querySearch, type GraphData } from './graph-store.ts';
+
+/** Where the published graph lives, relative to the app. Exposed as `__kg.api` for the gate. */
+export const API_BASE: string = `${import.meta.env.BASE_URL}data/graph.json`;
 
 export interface V2Node {
   id: string;
@@ -75,7 +77,7 @@ export interface V2SearchResponse {
 
 export interface HealthResponse {
   status: string;
-  neo4j: string;
+  /** When the published graph was exported. */
   version: string;
 }
 
@@ -91,45 +93,55 @@ export class ApiError extends Error {
   }
 }
 
-export function graphUrl(q: GraphQuery = {}): string {
-  const p = new URLSearchParams();
-  if (q.groups?.length) p.set('groups', q.groups.join(','));
-  if (q.types?.length) p.set('types', q.types.join(','));
-  if (typeof q.minDegree === 'number' && q.minDegree > 0) p.set('minDegree', String(q.minDegree));
-  p.set('limit', String(q.limit ?? 20000));
-  return `${API_BASE}/v2/graph?${p.toString()}`;
+let loading: Promise<GraphData> | null = null;
+
+/** The published graph, fetched once per page load. A failed load is retried on the next call. */
+function loadData(): Promise<GraphData> {
+  if (!loading) {
+    loading = (async () => {
+      const res = await fetch(API_BASE, { cache: 'no-cache' });
+      if (!res.ok) throw new ApiError(res.status, API_BASE);
+      return (await res.json()) as GraphData;
+    })();
+    loading.catch(() => {
+      loading = null;
+    });
+  }
+  return loading;
 }
 
-async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, { cache: 'no-store', signal });
-  if (!res.ok) throw new ApiError(res.status, url);
-  return (await res.json()) as T;
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 }
 
-/** Full graph with precomputed positions. Filters are API params, never client-side scans. */
-export function fetchGraph(q: GraphQuery = {}, signal?: AbortSignal): Promise<V2GraphResponse> {
-  return getJson<V2GraphResponse>(graphUrl(q), signal);
+/** Full graph with precomputed positions, filtered the way the API used to filter it. */
+export async function fetchGraph(q: GraphQuery = {}, signal?: AbortSignal): Promise<V2GraphResponse> {
+  const data = await loadData();
+  throwIfAborted(signal);
+  return queryGraph(data, { ...q, limit: q.limit ?? 20000 });
 }
 
 /** One node plus its typed, directed neighbourhood. */
-export function fetchNode(uid: string, signal?: AbortSignal, limit = 300): Promise<V2NodeDetail> {
-  return getJson<V2NodeDetail>(
-    `${API_BASE}/v2/node/${encodeURIComponent(uid)}?limit=${limit}`,
-    signal,
-  );
+export async function fetchNode(uid: string, signal?: AbortSignal, limit = 300): Promise<V2NodeDetail> {
+  const data = await loadData();
+  throwIfAborted(signal);
+  const node = queryNode(data, uid, limit);
+  if (!node) throw new ApiError(404, `${API_BASE}#${uid}`);
+  return node;
 }
 
-export function searchNodes(
+export async function searchNodes(
   query: string,
   limit = 25,
   signal?: AbortSignal,
 ): Promise<V2SearchResponse> {
-  return getJson<V2SearchResponse>(
-    `${API_BASE}/v2/search?q=${encodeURIComponent(query)}&limit=${limit}`,
-    signal,
-  );
+  const data = await loadData();
+  throwIfAborted(signal);
+  return querySearch(data, query, limit);
 }
 
-export function fetchHealth(): Promise<HealthResponse> {
-  return getJson<HealthResponse>(`${API_BASE}/health`);
+/** "Healthy" now means the published graph file loaded. */
+export async function fetchHealth(): Promise<HealthResponse> {
+  const data = await loadData();
+  return { status: 'ok', version: data.generatedAt };
 }

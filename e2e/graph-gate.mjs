@@ -4,20 +4,23 @@
  *   npm run gate          # builds nothing; expects `npm run build` + this script's own preview
  *
  * It starts `vite preview` on its own, loads the app in Chromium, and asserts the contract that
- * Phase 0 is responsible for: the graph in the browser is the graph the v2 API described, in the
- * layout the server computed, with camera focus that actually lands on the node and no render
- * storm. Expected values are derived from the API response rather than hardcoded, so the gate
- * stays meaningful as the vault grows; the current prod baseline (1185 nodes / 1592 edges from
- * 2019 relations) is printed for the record.
+ * Phase 0 is responsible for: the graph in the browser is the graph the published file
+ * describes, in the layout the pipeline computed, with camera focus that actually lands on the
+ * node and no render storm. Expected values are derived from the published file
+ * (`data/graph.json`, via the app's own `graph-store.ts`) rather than hardcoded, so the gate
+ * stays meaningful as the vault grows; the current counts are printed for the record.
  *
- * Overrides: KG_URL (default http://127.0.0.1:4173/), KG_API (default the prod v2 service).
+ * Overrides: KG_URL (default http://127.0.0.1:4173/).
  */
 import { spawn } from 'node:child_process';
 import { chromium } from '@playwright/test';
+import { queryGraph, queryNode } from '../src/lib/graph-store.ts';
 
-const API = process.env.KG_API || 'https://research-2-dqvr2eoj2a-uc.a.run.app';
 const PORT = 4173;
 const APP = process.env.KG_URL || `http://127.0.0.1:${PORT}/`;
+const DATA = 'data/graph.json';
+// The Cloud Run API the explorer used before the graph became a published file.
+const RETIRED_API = 'run.app';
 
 const failures = [];
 const check = (name, ok, detail = '') => {
@@ -39,39 +42,6 @@ async function waitForUrl(url, tries = 60) {
   return false;
 }
 
-// --- what the API says the map should be ------------------------------------
-// Cloud Run scales to zero, so the very first request of a run can fail. Retry the baseline,
-// but fail loudly with the status/body: a TypeError here once read like a broken graph.
-async function fetchBaseline(tries = 8) {
-  let last = 'no attempt';
-  for (let i = 0; i < tries; i += 1) {
-    try {
-      const res = await fetch(`${API}/v2/graph?limit=20000`);
-      if (!res.ok) {
-        last = `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
-      } else {
-        const ref = await res.json();
-        if (!Array.isArray(ref.nodes) || !Array.isArray(ref.edges)) {
-          throw new Error(`unexpected /v2/graph shape: ${JSON.stringify(ref).slice(0, 200)}`);
-        }
-        return ref;
-      }
-    } catch (err) {
-      last = String(err).slice(0, 200);
-    }
-    await sleep(1500);
-  }
-  throw new Error(`cannot read the API baseline from ${API}: ${last}`);
-}
-const ref = await fetchBaseline();
-const positioned = ref.nodes.filter((n) => Number.isFinite(n.x) && Number.isFinite(n.y));
-const ids = new Set(positioned.map((n) => n.id));
-const pairs = new Set(
-  ref.edges.filter((e) => ids.has(e.source) && ids.has(e.target)).map((e) => `${e.source}>${e.target}`),
-);
-const expect = { nodes: positioned.length, edges: pairs.size, relations: ref.edges.length };
-console.log(`API baseline: ${expect.nodes} nodes, ${expect.edges} edges from ${expect.relations} relations\n`);
-
 const alreadyUp = await (await fetch(APP).then((r) => r.ok).catch(() => false));
 const server = alreadyUp
   ? null
@@ -86,6 +56,23 @@ if (!up) {
   failures.push('preview server');
 }
 
+
+// --- what the published file says the map should be -------------------------
+const dataRes = up ? await fetch(new URL(DATA, APP)) : null;
+if (!dataRes?.ok) {
+  console.log(`FAIL  cannot read ${DATA} from ${APP}: run app/export_static.py --execute, then npm run build`);
+  process.exit(1);
+}
+const data = await dataRes.json();
+const ref = queryGraph(data, { limit: 20000 });
+const positioned = ref.nodes.filter((n) => Number.isFinite(n.x) && Number.isFinite(n.y));
+const ids = new Set(positioned.map((n) => n.id));
+const pairs = new Set(
+  ref.edges.filter((e) => ids.has(e.source) && ids.has(e.target)).map((e) => [e.source, e.target].sort().join('>')),
+);
+const expect = { nodes: positioned.length, edges: pairs.size, relations: ref.edges.length };
+console.log(`published graph (${data.generatedAt}): ${expect.nodes} nodes, ${expect.edges} edges from ${expect.relations} relations\n`);
+
 const browser = await chromium.launch();
 const page = up ? await browser.newPage({ viewport: { width: 1440, height: 900 } }) : null;
 
@@ -97,7 +84,7 @@ if (page) {
   });
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('request', (r) => {
-    if (r.url().startsWith(API)) apiCalls.push(r.url().replace(API, ''));
+    if (r.url().includes(DATA) || r.url().includes(RETIRED_API)) apiCalls.push(r.url());
   });
 }
 
@@ -106,6 +93,9 @@ try {
   await page.goto(APP, { waitUntil: 'domcontentloaded', timeout: 60000 });
   // The renderer must mount before the data arrives (eager mount); the graph fills in after.
   await page.waitForFunction(() => window.__kg && window.__kg.sigma.getGraph().order > 0, null, { timeout: 60000 });
+  // The data is local now and lands within a frame of mount, before the camera has settled;
+  // with the API, network latency used to cover that gap.
+  await page.waitForFunction(() => Number.isFinite(window.__kg.sigma.getCamera().getState().ratio), null, { timeout: 10000 });
 
   const live = await page.evaluate(() => {
     const g = window.__kg.sigma.getGraph();
@@ -127,23 +117,24 @@ try {
     };
   });
 
-  check('node count matches the API', live.order === expect.nodes, `${live.order} of ${expect.nodes}`);
-  check('edge count is one per node pair', live.size === expect.edges, `${live.size} of ${expect.edges} (API sent ${expect.relations} relations)`);
+  check('node count matches the published graph', live.order === expect.nodes, `${live.order} of ${expect.nodes}`);
+  check('edge count is one per node pair', live.size === expect.edges, `${live.size} of ${expect.edges} (file holds ${expect.relations} relations)`);
   check('merged edge keeps every relation', (live.widestMerge || []).length > 1, JSON.stringify(live.widestMerge));
   check('every node has finite x/y', live.finite === live.order, `${live.finite}/${live.order}`);
   check('every node has finite display data', live.withDisplay === live.order, `${live.withDisplay}/${live.order}`);
 
   const byId = Object.fromEntries(ref.nodes.map((n) => [n.id, n]));
   check(
-    'positions are the server layout, not recomputed',
+    'positions are the pipeline layout, not recomputed',
     live.sample.every((s) => byId[s.n] && Math.abs(byId[s.n].x - s.x) < 1e-6 && Math.abs(byId[s.n].y - s.y) < 1e-6),
     JSON.stringify(live.sample[0]),
   );
-  check('app targets the v2 service', live.api === API, live.api);
+  check('app reads the published graph file', live.api.endsWith(DATA), live.api);
 
-  const legacy = apiCalls.filter((u) => !/^\/(v2\/|health)/.test(u));
-  check('no legacy endpoint calls', legacy.length === 0, legacy.slice(0, 2).join(' '));
-  console.log(`      endpoints used: ${[...new Set(apiCalls.map((u) => u.split('?')[0]))].join(', ')}`);
+  const retired = apiCalls.filter((u) => u.includes(RETIRED_API));
+  check('no calls to the retired API', retired.length === 0, retired.slice(0, 2).join(' '));
+  const loads = apiCalls.filter((u) => u.includes(DATA));
+  check('the graph file is fetched exactly once', loads.length === 1, `${loads.length}`);
 
   const statsText = await page.evaluate(() => document.body.innerText.replace(/\n/g, '|'));
   check('stats bar reports the live map', new RegExp(`Nodes: ${expect.nodes}`).test(statsText) && new RegExp(`Edges: ${expect.edges}`).test(statsText), statsText.slice(0, 90));
@@ -168,7 +159,7 @@ try {
   await page.waitForFunction((was) => Math.abs(window.__kg.sigma.getCamera().getState().ratio - was) > 0.05, before.ratio, { timeout: 8000 }).catch(() => {});
   await sleep(500);
 
-  const refDetail = await (await fetch(`${API}/v2/node/${encodeURIComponent(target)}`)).json();
+  const refDetail = queryNode(data, target, 300);
   const after = await page.evaluate((uid) => {
     const s = window.__kg.sigma;
     const c = s.getContainer();
@@ -184,7 +175,7 @@ try {
   // PAR-21 / PAR-58: writing graph coordinates into the camera parks it off-stage and the
   // canvas renders black. A node at the exact centre cannot be off-stage.
   check('focused node lands on the stage centre', after.offCentre < 60, `${after.offCentre.toFixed(0)}px off centre`);
-  check('detail panel lists every neighbour', (after.panelText.match(/relationships \((\d+)\)/i) || [])[1] === String(refDetail.neighbours.length), `panel ${after.panelText.match(/relationships \((\d+)\)/i)?.[1]} vs API ${refDetail.neighbours.length}`);
+  check('detail panel lists every neighbour', (after.panelText.match(/relationships \((\d+)\)/i) || [])[1] === String(refDetail.neighbours.length), `panel ${after.panelText.match(/relationships \((\d+)\)/i)?.[1]} vs file ${refDetail.neighbours.length}`);
   check('detail panel names the selected node', after.panelText.includes(byId[target].name), target);
 
   await page.keyboard.press('Escape');
@@ -199,7 +190,7 @@ try {
   await sleep(400);
   check('hover leaves the graph untouched', (await page.evaluate(() => window.__kg.sigma.getGraph().order)) === orderBefore);
 
-  // --- filtering is an API param -------------------------------------------
+  // --- filtering happens in the browser --------------------------------------
   const groups = await page.evaluate(() => {
     const set = new Set();
     window.__kg.sigma.getGraph().forEachNode((_, a) => set.add(a.nodeType));
@@ -209,8 +200,8 @@ try {
   const callsBefore = apiCalls.length;
   await page.click(`button[title^="Toggle ${hidden}"]`);
   await sleep(6000);
-  const filterCalls = apiCalls.slice(callsBefore).filter((u) => u.startsWith('/v2/graph'));
-  check('hiding a group fires exactly one filtered request', filterCalls.length === 1 && filterCalls[0].includes('groups='), `${filterCalls.length}: ${(filterCalls[0] || 'none').slice(0, 80)}`);
+  const filterCalls = apiCalls.slice(callsBefore);
+  check('hiding a group makes no network request', filterCalls.length === 0, `${filterCalls.length}`);
   const filtered = await page.evaluate((h) => {
     const g = new Set();
     let bad = 0;

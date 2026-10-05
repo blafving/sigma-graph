@@ -92,15 +92,15 @@ export function buildGraph(data: V2GraphResponse): { graph: DirectedGraph; stats
     });
   }
 
-  // The API keys edges by relation type, so one node pair can arrive several times (419 pairs
-  // carry RELATED_TO + MENTIONS, up to 3 types). graphology's non-multi Graph - which is what
-  // sigma requires - stores a single edge per ordered pair and throws on the second one, so
-  // parallel relations merge into one edge that lists them all. 2019 relations -> 1592 edges.
+  // Relationships arrive one per relation type and direction, so one node pair can arrive
+  // several times (A RELATED_TO B, A MENTIONS B, B MENTIONS A). sigma needs a non-multi graph,
+  // and a pair drawn twice is just a thicker line, so everything between two nodes merges
+  // into one edge that lists every relation. The first relationship seen sets its direction.
   let relations = 0;
   for (const e of data.edges) {
     if (!graph.hasNode(e.source) || !graph.hasNode(e.target)) continue;
     relations += 1;
-    const key = `${e.source}\u0000${e.target}`;
+    const key = e.source < e.target ? `${e.source}\u0000${e.target}` : `${e.target}\u0000${e.source}`;
     if (graph.hasEdge(key)) {
       const attrs = graph.getEdgeAttributes(key);
       if (e.type && !attrs.relations.includes(e.type)) attrs.relations.push(e.type);
@@ -162,7 +162,7 @@ export interface UseGraphData {
 }
 
 /**
- * Fetch and build once per query. Filters are API params, so a filter change is a new request;
+ * Fetch and build once per query. Filters are query params, so a filter change is a new query;
  * the graph instance stays the same object, which keeps sigma's index and camera alive.
  */
 export function useGraphData(query: GraphQuery): UseGraphData {
