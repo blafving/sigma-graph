@@ -10,6 +10,13 @@
  *   node scripts/compute-layout.cjs [--in app/out/vault_graph.json]
  *                                  [--out app/out/layout.json] [--iterations N]
  *                                  [--extent PX] [--main-only]
+ *                                  [--previous published-graph.json]
+ *
+ * With --previous (a published graph.json, or an earlier layout.json), every note that
+ * already has a position keeps it exactly and only new notes are laid out, each starting
+ * beside the notes it links to. The map then stays put between publishes instead of
+ * rearranging whenever a note is added. Without it, or when the file is missing or shares
+ * no notes with the vault, the whole map is laid out from scratch.
  */
 const fs = require('fs');
 const path = require('path');
@@ -29,6 +36,22 @@ const outFile = path.resolve(root, arg('out', 'app/out/layout.json'));
 const iterations = Number(arg('iterations', 300));
 const extent = Number(arg('extent', 4000));
 const mainOnly = flag('main-only');
+const previousFile = arg('previous', null);
+
+// uid -> [x, y] from a published graph.json ({nodes: [{uid, x, y}]}) or a layout.json.
+function readPrevious(file) {
+  if (!file || !fs.existsSync(file)) return new Map();
+  const prev = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const entries = Array.isArray(prev.nodes) ? prev.nodes.map((n) => [n.uid, [n.x, n.y]]) : Object.entries(prev);
+  return new Map(entries.filter(([, xy]) => xy && Number.isFinite(xy[0]) && Number.isFinite(xy[1])));
+}
+
+// Deterministic stand-in for Math.random, so a new note lands in the same place on every run.
+function unit(text, salt) {
+  let h = 2166136261 ^ salt;
+  for (let i = 0; i < text.length; i += 1) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return ((h >>> 0) % 100000) / 100000;
+}
 
 const payload = JSON.parse(fs.readFileSync(inFile, 'utf8'));
 const STUB_TYPES = new Set(['Index']);
@@ -46,6 +69,54 @@ for (const e of payload.edges) {
 graph.forEachNode((node, attrs) => {
   graph.setNodeAttribute(node, 'size', 4 + Math.sqrt(graph.degree(node)) * 2);
 });
+
+const previous = readPrevious(previousFile);
+const kept = graph.filterNodes((node) => previous.has(node));
+
+if (kept.length) {
+  // Incremental: pin what is already on the map, let ForceAtlas2 move only the newcomers.
+  let reach = 0;
+  for (const node of kept) {
+    const [x, y] = previous.get(node);
+    graph.mergeNodeAttributes(node, { x, y, fixed: true });
+    reach = Math.max(reach, Math.hypot(x, y));
+  }
+  const added = graph.filterNodes((node) => !previous.has(node));
+  for (const node of added) {
+    const placed = graph.filterNeighbors(node, (nb) => previous.has(nb));
+    const angle = unit(node, 1) * 2 * Math.PI;
+    let x;
+    let y;
+    if (placed.length) {
+      // beside the notes it links to, nudged off-centre so nothing starts stacked
+      x = placed.reduce((sum, nb) => sum + previous.get(nb)[0], 0) / placed.length + Math.cos(angle) * 30;
+      y = placed.reduce((sum, nb) => sum + previous.get(nb)[1], 0) / placed.length + Math.sin(angle) * 30;
+    } else {
+      // nothing to anchor to yet: start out on the rim
+      x = Math.cos(angle) * reach * (0.8 + unit(node, 2) * 0.2);
+      y = Math.sin(angle) * reach * (0.8 + unit(node, 2) * 0.2);
+    }
+    graph.mergeNodeAttributes(node, { x, y });
+  }
+  console.log(`incremental layout: ${kept.length} notes keep their position, ${added.length} new` +
+              ` (${previous.size - kept.length} previous positions no longer in the vault)`);
+  if (added.length) forceatlas2.assign(graph, { settings: forceatlas2.inferSettings(graph), iterations });
+
+  const out = {};
+  let bad = 0;
+  graph.forEachNode((node, a) => {
+    if (!Number.isFinite(a.x) || !Number.isFinite(a.y)) bad += 1;
+    out[node] = previous.has(node) ? previous.get(node) : [Math.round(a.x * 100) / 100, Math.round(a.y * 100) / 100];
+  });
+  if (bad) {
+    console.error(`FATAL: ${bad} nodes non-finite after incremental layout`);
+    process.exit(1);
+  }
+  fs.writeFileSync(outFile, JSON.stringify(out));
+  console.log(`wrote ${Object.keys(out).length} positions -> ${outFile}`);
+  process.exit(0);
+}
+console.log(previousFile ? `no usable positions in ${previousFile}: laying out from scratch` : 'laying out from scratch');
 
 // Largest component first: FA2 flings disconnected fragments to unpredictable
 // distances, so optionally lay out the main component and place the rest later.
