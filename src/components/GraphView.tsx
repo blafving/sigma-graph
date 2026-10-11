@@ -22,6 +22,7 @@ import { FilterBar } from './FilterBar';
 import { GraphUiContext } from '../GraphUiContext';
 import type { GraphNodeDetail } from '../GraphUiContext';
 import { NodeList } from './NodeList';
+import { SettingsCog } from './SettingsPanel';
 import { StatsBar } from './StatsBar';
 import { graphStyles as styles } from './graphStyles';
 
@@ -172,6 +173,7 @@ export function GraphView() {
             typeCounts={stats.groups}
             onToggleType={toggleType}
           />
+          <SettingsCog />
         </div>
 
         <div style={styles.middleRow}>

@@ -80,6 +80,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid #333',
     flexShrink: 0,
     flexWrap: 'wrap',
+    // Room for the settings cog, which floats at the right edge of this bar.
+    paddingRight: 50,
   },
   searchContainer: {
     position: 'relative',
