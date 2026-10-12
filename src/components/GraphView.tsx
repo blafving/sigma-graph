@@ -26,6 +26,13 @@ import { SettingsCog } from './SettingsPanel';
 import { StatsBar } from './StatsBar';
 import { graphStyles as styles } from './graphStyles';
 
+/**
+ * Groups hidden on a cold load. Sources are the material other notes are made of
+ * (excerpt chunks alone are a fifth of the map), and reading the graph means reading
+ * what was concluded, not the transcripts. One click on the pill brings them back.
+ */
+const DEFAULT_HIDDEN = new Set(['Source']);
+
 export function GraphView() {
   const [allGroups, setAllGroups] = useState<Set<string>>(() => new Set());
   const [visibleGroups, setVisibleGroups] = useState<Set<string>>(() => new Set());
@@ -50,7 +57,11 @@ export function GraphView() {
   useEffect(() => {
     if (stats.groups.size === 0) return;
     setAllGroups((prev) => (prev.size ? prev : new Set(stats.groups.keys())));
-    setVisibleGroups((prev) => (prev.size ? prev : new Set(stats.groups.keys())));
+    setVisibleGroups((prev) =>
+      prev.size
+        ? prev
+        : new Set(Array.from(stats.groups.keys()).filter((g) => !DEFAULT_HIDDEN.has(g))),
+    );
   }, [stats]);
 
   const stageWidth = useCallback(() => stageWidthRef.current, []);

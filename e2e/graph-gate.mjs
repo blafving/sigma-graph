@@ -97,6 +97,22 @@ try {
   // with the API, network latency used to cover that gap.
   await page.waitForFunction(() => Number.isFinite(window.__kg.sigma.getCamera().getState().ratio), null, { timeout: 10000 });
 
+  // --- the cold load is the reading view: Sources start hidden -----------------
+  const cold = await page.evaluate(() => {
+    const pill = document.querySelector('button[title^="Toggle Source"]');
+    return {
+      order: window.__kg.sigma.getGraph().order,
+      pill: pill ? pill.innerText.trim() : null,
+    };
+  });
+  check('Sources are hidden on a cold load',
+        cold.order < expect.nodes && !!cold.pill && !cold.pill.includes('\u2713'),
+        `${cold.order} of ${expect.nodes} notes, pill reads "${cold.pill}"`);
+  await page.click('button[title^="Toggle Source"]');
+  await sleep(6000);
+  const revealed = await page.evaluate(() => window.__kg.sigma.getGraph().order);
+  check('the Source pill brings the transcripts back', revealed === expect.nodes, `${revealed} notes`);
+
   const live = await page.evaluate(() => {
     const g = window.__kg.sigma.getGraph();
     let finite = 0;

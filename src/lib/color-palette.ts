@@ -12,7 +12,7 @@ export const PALETTE = [
 export const GROUP_COLORS: Record<string, string> = {
   Concept: '#64b5f6',
   Source: '#ba68c8',
-  Agent: '#ffb74d',
+  Actor: '#ffb74d',
   Technology: '#4db6ac',
   Market: '#f06292',
   Analysis: '#fff176',
