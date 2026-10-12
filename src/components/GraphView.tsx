@@ -35,6 +35,7 @@ const DEFAULT_HIDDEN = new Set(['Source']);
 
 export function GraphView() {
   const [allGroups, setAllGroups] = useState<Set<string>>(() => new Set());
+  const [groupTotals, setGroupTotals] = useState<Map<string, number>>(() => new Map());
   const [visibleGroups, setVisibleGroups] = useState<Set<string>>(() => new Set());
   const [selectedNode, setSelectedNode] = useState<GraphNodeDetail | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -57,6 +58,9 @@ export function GraphView() {
   useEffect(() => {
     if (stats.groups.size === 0) return;
     setAllGroups((prev) => (prev.size ? prev : new Set(stats.groups.keys())));
+    // Counts on the chips are the size of each group in the map, not the size of whatever
+    // slice is currently loaded, or a hidden group would claim to hold nothing.
+    setGroupTotals((prev) => (prev.size ? prev : new Map(stats.groups)));
     setVisibleGroups((prev) =>
       prev.size
         ? prev
@@ -159,7 +163,7 @@ export function GraphView() {
       visibleTypes: visibleGroups,
       allTypes: allGroups,
       toggleType,
-      visibleTypeCounts: stats.groups,
+      visibleTypeCounts: groupTotals.size ? groupTotals : stats.groups,
       graphLoaded: revision > 0,
       setGraphLoaded: () => undefined,
       typeCounts: stats.groups,
@@ -169,7 +173,7 @@ export function GraphView() {
       isLayoutRunning: false,
       setIsLayoutRunning: () => undefined,
     }),
-    [selectedNode, searchQuery, visibleGroups, allGroups, toggleType, stats, revision, zoomLevel],
+    [selectedNode, searchQuery, visibleGroups, allGroups, groupTotals, toggleType, stats, revision, zoomLevel],
   );
 
   return (
@@ -181,7 +185,7 @@ export function GraphView() {
             onSearchChange={setSearchQuery}
             allTypes={allGroups}
             visibleTypes={visibleGroups}
-            typeCounts={stats.groups}
+            typeCounts={groupTotals.size ? groupTotals : stats.groups}
             onToggleType={toggleType}
           />
           <SettingsCog />
@@ -193,7 +197,7 @@ export function GraphView() {
               graph={graph}
               allTypes={allGroups}
               visibleTypes={visibleGroups}
-              visibleTypeCounts={stats.groups}
+              visibleTypeCounts={groupTotals.size ? groupTotals : stats.groups}
               onToggleType={toggleType}
               searchQuery={searchQuery}
               selectedNode={selectedNode}
