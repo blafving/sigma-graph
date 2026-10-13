@@ -85,8 +85,8 @@ export class ApiError extends Error {
   status: number;
   url: string;
 
-  constructor(status: number, url: string) {
-    super(`API ${status} from ${url}`);
+  constructor(status: number, url: string, message?: string) {
+    super(message ?? `API ${status} from ${url}`);
     this.name = 'ApiError';
     this.status = status;
     this.url = url;
@@ -101,6 +101,17 @@ function loadData(): Promise<GraphData> {
     loading = (async () => {
       const res = await fetch(API_BASE, { cache: 'no-cache' });
       if (!res.ok) throw new ApiError(res.status, API_BASE);
+      // Hosting rewrites every unknown path to index.html, so a deploy without data/graph.json
+      // answers 200 with HTML. Without this the failure is "JSON.parse: unexpected character".
+      const type = res.headers.get('content-type') ?? '';
+      if (!type.includes('json')) {
+        throw new ApiError(
+          res.status,
+          API_BASE,
+          `${API_BASE} answered ${type || 'no content-type'} instead of JSON - ` +
+            'the deploy is missing data/graph.json (Hosting rewrote the path to index.html)',
+        );
+      }
       return (await res.json()) as GraphData;
     })();
     loading.catch(() => {

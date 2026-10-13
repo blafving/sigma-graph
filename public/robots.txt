@@ -1,0 +1,4 @@
+# The graph file is the whole vault's frontmatter, served as one document.
+# It is fine for a person to open; it is not something to crawl or index.
+User-agent: *
+Disallow: /data/
