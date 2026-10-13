@@ -127,6 +127,9 @@ function GraphAudit() {
           {num(audit.published_edges)} edges, {num(audit.stubs)} unwritten stubs
         </span>
         <span style={styles.muted}>audited {new Date(audit.generatedAt).toLocaleString()}, counted from the vault</span>
+        <span style={styles.muted}>
+          {num(audit.withheld_notes)} notes are withheld from what is published, per app/publish_policy.py
+        </span>
       </div>
 
       <Card title="Floors">

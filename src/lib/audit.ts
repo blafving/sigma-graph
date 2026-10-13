@@ -10,6 +10,8 @@ export const AUDIT_URL = `${import.meta.env.BASE_URL}data/audit.json`;
 export interface AuditReport {
   generatedAt: string;
   vault_notes: number;
+  /** Notes publish_policy.py keeps out of this build. */
+  withheld_notes: number;
   published_nodes: number;
   published_edges: number;
   stubs: number;
