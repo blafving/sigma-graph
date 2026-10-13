@@ -13,6 +13,9 @@
  * Overrides: KG_URL (default http://127.0.0.1:4173/).
  */
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import { queryGraph, queryNode } from '../src/lib/graph-store.ts';
 
@@ -73,6 +76,26 @@ const pairs = new Set(
 const expect = { nodes: positioned.length, edges: pairs.size, relations: ref.edges.length };
 console.log(`published graph (${data.generatedAt}): ${expect.nodes} nodes, ${expect.edges} edges from ${expect.relations} relations\n`);
 
+// --- publish_policy.py is the only thing between the vault and this file ----
+const POLICY_FILE = resolve(dirname(fileURLToPath(import.meta.url)), '../../app/out/publish_policy.json');
+let policy = null;
+try {
+  policy = JSON.parse(readFileSync(POLICY_FILE, 'utf8'));
+} catch {
+  /* reported by the check below */
+}
+check('the export left a publish policy report', !!policy, POLICY_FILE);
+if (policy) {
+  check('the export did not bypass the policy with --include-private', policy.includePrivate !== true);
+  const cut = [...policy.withheld, ...(policy.orphanStubs ?? [])];
+  const cutUids = new Set(cut.map((w) => w.uid));
+  const cutNames = new Set(cut.map((w) => String(w.name).toLowerCase()));
+  const leaks = data.nodes
+    .filter((n) => cutUids.has(n.uid) || cutNames.has(String(n.name).toLowerCase()))
+    .map((n) => n.uid);
+  check(`no withheld note reached the published graph (${cut.length} cut)`, leaks.length === 0, leaks.slice(0, 4).join(', '));
+}
+
 const browser = await chromium.launch();
 const page = up ? await browser.newPage({ viewport: { width: 1440, height: 900 } }) : null;
 
@@ -98,6 +121,9 @@ try {
   await page.waitForFunction(() => Number.isFinite(window.__kg.sigma.getCamera().getState().ratio), null, { timeout: 10000 });
 
   // --- the cold load is the reading view: Sources start hidden -----------------
+  // The default filter lands after the first unfiltered build, so wait for the
+  // rebuilt graph rather than racing it.
+  await page.waitForFunction((n) => window.__kg.sigma.getGraph().order < n, expect.nodes, { timeout: 20000 });
   const cold = await page.evaluate(() => {
     const pill = document.querySelector('button[title^="Toggle Source"]');
     return {
@@ -107,9 +133,9 @@ try {
   });
   check('Sources are hidden on a cold load',
         cold.order < expect.nodes && !!cold.pill && !cold.pill.includes('\u2713'),
-        `${cold.order} of ${expect.nodes} notes, pill reads "${cold.pill}"`);
+        `${cold.order} of ${expect.nodes} notes, pill reads "${cold.pill.replace(/\n/g, ' ')}"`);
   await page.click('button[title^="Toggle Source"]');
-  await sleep(6000);
+  await page.waitForFunction((n) => window.__kg.sigma.getGraph().order === n, expect.nodes, { timeout: 20000 });
   const revealed = await page.evaluate(() => window.__kg.sigma.getGraph().order);
   check('the Source pill brings the transcripts back', revealed === expect.nodes, `${revealed} notes`);
 
